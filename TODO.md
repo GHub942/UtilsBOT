@@ -31,3 +31,6 @@ This is the follow-up backlog; it is not a guarantee that an item is scheduled.
 - [x] Translate all remaining French backend messages and administrative panels to English.
 - [x] Add English translations for preference categories and the time tools, selectable from `/dashboard utils`.
 - [x] Complete and audit the English translation of every user-facing bot message.
+
+## T5 : BOT/User States
+- [ ] Fait en sorte que le BOT analyse le statut d'autre BOT (ou utilisateur) et affiche dans un salon avec un message embed leur statut. 1 embed pour tous et maximum 5 utilisateurs en analyse. Affiché le statut (en ligne, inactif, ne pas déranger, hors-ligne), l'activité et depuis combien de temps il est en ligne. Mise à jour des statut toutes les 0.5 des heures (ex: 15:00 > 15:05 > 15:10 > 15:15 > etc..), possiblité d'actualiser sur l'embed le statut manuellement. Dans les paramètres possible de limiter cela aux membres ayant la permission via le système de permission, au propriétaire du serveur, à personne ou tout le monde.

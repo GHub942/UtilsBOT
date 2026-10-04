@@ -35,7 +35,7 @@ Environment variables:
 - Timestamp creation displays a Discord preview, Unix timestamp, and copy-ready Discord formats.
 - Time-zone conversion handles IANA time zones, fixed UTC offsets, seasonal offsets, and daylight-saving transitions.
 - Preference controls are grouped by region, dates, times, and language/privacy. Language previews show a relative reset time and require confirmation within 10 seconds.
-- The region menu offers curated city-based IANA zones plus one UTC/GMT option. The custom time-zone button remains available regardless of the current zone. Custom input accepts supported IANA zones, fixed abbreviations, and UTC/GMT offsets.
+- The region menu offers curated city-based IANA zones, one UTC/GMT option, and an “Other time zone...” select option. The custom option remains available regardless of the current zone. Custom input accepts supported IANA zones, fixed abbreviations, and UTC/GMT offsets.
 - Choosing UTC/GMT saves an automatic display preference: UTC is shown in Central European winter, GMT in summer, and both represent a fixed +00:00 offset.
 - Time conversion asks for both source and destination zones. The destination initially follows the user's saved time-zone preference.
 - Timestamp input pads short dates, expands two-digit years, and fills in omitted seconds.

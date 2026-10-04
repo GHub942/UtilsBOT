@@ -24,7 +24,12 @@ function zoneOptions(selected, language = 'fr') {
     value,
     description,
     default: false
-  }));
+  })).concat({
+    label: t(language, 'custom_zone'),
+    value: 'custom',
+    description: t(language, 'custom_zone_help'),
+    default: false
+  });
 }
 
 function zoneSelect(customId, placeholder, selected, language = 'fr') {

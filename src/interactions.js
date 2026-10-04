@@ -100,7 +100,11 @@ async function handleInteraction(client, interaction) {
     && !/^danger:(confirm|cancel):/.test(interaction.customId)) {
     clearPendingDeletion(deletionKey(interaction));
   }
-  const opensModal = interaction.isButton() && /^(timestamp:(date|time|zone-custom)|convert:(date|time|zone-custom):|user:timezone-custom:|db:reset-confirm:)/.test(interaction.customId);
+  const opensModalButton = interaction.isButton() && /^(timestamp:(date|time)|convert:(date|time|source):|db:reset-confirm:)/.test(interaction.customId);
+  const opensCustomZoneModal = interaction.isStringSelectMenu()
+    && ['timestamp:zone-select:', 'user:timezone-select:', 'convert:zone-select:'].some(prefix => interaction.customId.startsWith(prefix))
+    && interaction.values[0] === 'custom';
+  const opensModal = opensModalButton || opensCustomZoneModal;
   if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.()) && !opensModal) {
     interaction = await acknowledgeComponent(interaction);
   }
@@ -385,14 +389,6 @@ async function handleButton(interaction) {
   }
   if (area === 'user') {
     if (action === 'category') return interaction.update(panels.userPayload(interaction, '', interaction.customId.split(':')[2]));
-    if (action === 'timezone-custom') {
-      const previous = timezoneOrigins.get(interaction.user.id);
-      if (previous) clearTimeout(previous.timer);
-      const timer = setTimeout(() => timezoneOrigins.delete(interaction.user.id), 15 * 60_000);
-      timer.unref();
-      timezoneOrigins.set(interaction.user.id, { interaction, timer });
-      return interaction.showModal(require('./modals').timezone(database.getUser(interaction.user.id).timezone, database.getUser(interaction.user.id).language));
-    }
     if (action === 'submenu') {
       const section = interaction.customId.split(':')[2];
       if (!['language', 'privacy'].includes(section)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_submenu_unavailable')));
@@ -425,7 +421,6 @@ async function handleButton(interaction) {
   }
   if (area === 'timestamp') {
     if (action === 'zone') return interaction.update(panels.timestampZonePayload(interaction, timestamp.getDraft(interaction.user.id).zone));
-    if (action === 'zone-custom') return timestamp.openZoneField(interaction);
     if (action === 'date' || action === 'time') return timestamp.openField(interaction, action);
     if (action === 'confirm') return timestamp.confirm(interaction);
     if (action === 'disambiguation') return timestamp.handleDisambiguation(interaction, Number(interaction.customId.split(':')[2]));
@@ -435,7 +430,6 @@ async function handleButton(interaction) {
   if (area === 'convert') {
     if (action === 'zone-back') return interaction.update(panels.convertPayload(interaction, convert.getDraft(interaction.user.id)));
     if (action === 'zone') return interaction.update(panels.convertZonePayload(interaction, interaction.customId.split(':')[2], convert.getDraft(interaction.user.id)));
-    if (action === 'zone-custom') return convert.openZoneField(interaction, interaction.customId.split(':')[2]);
     if (action === 'date' || action === 'time') return convert.openField(interaction, action);
     if (action === 'confirm') return convert.confirm(interaction);
     if (action === 'back') return interaction.update(panels.convertPayload(interaction, convert.getDraft(interaction.user.id)));
@@ -463,6 +457,7 @@ async function handleSelect(interaction) {
   if (area === 'convert' && action === 'zone-select') {
     const role = interaction.customId.split(':')[2];
     const value = interaction.values[0];
+    if (value === 'custom') return convert.openZoneField(interaction, role);
     if (!isSelectableZone(value)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'invalid_zone')));
     const draft = convert.getDraft(interaction.user.id);
     draft[role] = value;
@@ -471,6 +466,7 @@ async function handleSelect(interaction) {
   }
   if (area === 'timestamp' && action === 'zone-select') {
     const value = interaction.values[0];
+    if (value === 'custom') return timestamp.openZoneField(interaction);
     if (!isSelectableZone(value)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'invalid_zone')));
     const draft = timestamp.getDraft(interaction.user.id);
     draft.zone = value;
@@ -479,6 +475,15 @@ async function handleSelect(interaction) {
   }
   if (area === 'user' && action === 'timezone-select') {
     const value = interaction.values[0];
+    if (value === 'custom') {
+      const previous = timezoneOrigins.get(interaction.user.id);
+      if (previous) clearTimeout(previous.timer);
+      const timer = setTimeout(() => timezoneOrigins.delete(interaction.user.id), 15 * 60_000);
+      timer.unref();
+      timezoneOrigins.set(interaction.user.id, { interaction, timer });
+      const settings = database.getUser(interaction.user.id);
+      return interaction.showModal(require('./modals').timezone(settings.timezone, settings.language));
+    }
     if (!isSelectableZone(value)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'invalid_zone')));
     updateSettings(interaction.user.id, { timezone: value });
     return interaction.update(panels.userPayload(interaction, `${t(database.getUser(interaction.user.id).language, 'timezone_updated')} **${value}**.`, 'region'));
@@ -567,4 +572,4 @@ function showUserData(interaction, userId) {
   });
 }
 
-module.exports = { beginDeletionConfirmation, cancelLanguage, cancelPendingLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, healthRefreshCooldowns, interactionCooldowns, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage };
+module.exports = { beginDeletionConfirmation, cancelLanguage, cancelPendingLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, healthRefreshCooldowns, interactionCooldowns, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage, timezoneOrigins };

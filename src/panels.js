@@ -204,10 +204,7 @@ function userPayload(interaction, notice = '', category = 'home') {
     preferenceRows = [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
       .setCustomId(`user:timezone-select:${id}`)
       .setPlaceholder(t(settings.language, 'timezone'))
-      .addOptions([
-        ...zoneOptions(settings.timezone, settings.language)
-      ]))];
-    preferenceRows.push(row(button(`user:timezone-custom:${id}`, t(settings.language, 'custom_zone'), ButtonStyle.Primary)));
+      .addOptions(zoneOptions(settings.timezone, settings.language)))];
   } else if (category === 'dates') {
     preferenceRows = [
       preferenceSelect(`user:date-mode:${id}`, t(settings.language, 'date_format'), ['DMY', 'MDY', 'YMD'], settings.dateFormats[0], { DMY: t(settings.language, 'date_format_desc'), MDY: t(settings.language, 'date_format_us'), YMD: t(settings.language, 'date_format_iso') }),
@@ -306,7 +303,7 @@ function timestampPayload(interaction, state) {
 function timestampZonePayload(interaction, selected = 'UTC') {
   const language = database.getUser(owner(interaction)).language;
   const options = zoneOptions(selected, language);
-  return { embeds: [embed(t(language, 'timezone'), t(language, 'region_help')).addFields({ name: t(language, 'selected_zone'), value: selected })], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`timestamp:zone-select:${owner(interaction)}`).setPlaceholder(t(language, 'timezone')).addOptions(options)), row(button(`timestamp:zone-custom:${owner(interaction)}`, t(language, 'custom_zone'), ButtonStyle.Primary)), back(`tool:back:${owner(interaction)}`, language)], flags: MessageFlags.Ephemeral };
+  return { embeds: [embed(t(language, 'timezone'), t(language, 'region_help')).addFields({ name: t(language, 'selected_zone'), value: selected })], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`timestamp:zone-select:${owner(interaction)}`).setPlaceholder(t(language, 'timezone')).addOptions(options)), back(`tool:back:${owner(interaction)}`, language)], flags: MessageFlags.Ephemeral };
 }
 
 function convertPayload(interaction, state) {
@@ -325,7 +322,7 @@ function convertZonePayload(interaction, role, state) {
   const language = database.getUser(id).language;
   const selected = state[role];
   const key = role === 'source' ? 'source_zone' : 'destination_zone';
-  return { embeds: [embed(t(language, 'conversion_title'), role === 'source' ? t(language, 'select_source') : t(language, 'select_destination')).addFields({ name: t(language, 'selected_zone'), value: selected })], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`convert:zone-select:${role}:${id}`).setPlaceholder(t(language, key)).addOptions(zoneOptions(null, language))), row(button(`convert:zone-custom:${role}:${id}`, t(language, 'custom_zone'), ButtonStyle.Primary)), row(button(`convert:zone-back:${id}`, t(language, 'back_categories')))], flags: MessageFlags.Ephemeral };
+  return { embeds: [embed(t(language, 'conversion_title'), role === 'source' ? t(language, 'select_source') : t(language, 'select_destination')).addFields({ name: t(language, 'selected_zone'), value: selected })], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`convert:zone-select:${role}:${id}`).setPlaceholder(t(language, key)).addOptions(zoneOptions(null, language))), row(button(`convert:zone-back:${id}`, t(language, 'back_categories')))], flags: MessageFlags.Ephemeral };
 }
 
 module.exports = { convertPayload, convertZonePayload, dashboardPayload, databasePayload, healthPayload, journalPayload, languageConfirmationPayload, managementPayload, permissionsPayload, timestampPayload, timestampZonePayload, toolsPayload, userDataPayload, userPayload };

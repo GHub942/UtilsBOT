@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const database = require('../src/database');
 const { PERMISSIONS } = require('../src/permissions');
 const timestamp = require('../src/commands/timestamp');
-const { beginDeletionConfirmation, cancelLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, healthRefreshCooldowns, interactionCooldowns, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage } = require('../src/interactions');
+const { beginDeletionConfirmation, cancelLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, healthRefreshCooldowns, interactionCooldowns, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage, timezoneOrigins } = require('../src/interactions');
 
 test('denies server statistics access without permission and responds ephemerally', async () => {
   const userId = `interaction-test-${randomUUID()}`;
@@ -257,6 +257,115 @@ test('rate limits all interactions and applies a separate three-second operation
     healthRefreshCooldowns.delete(userId);
     database.closeAll();
     require('node:fs').rmSync(require('node:path').join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
+  }
+});
+
+test('shares the one-second cooldown across slash commands, select menus, and buttons', async () => {
+  const userId = `shared-cooldown-${randomUUID()}`;
+  const originalNow = Date.now;
+  let now = 200_000;
+  Date.now = () => now;
+  const calls = [];
+  const client = {
+    commands: new Map([['dashboard', {
+      execute: async interaction => {
+        await interaction.reply({ embeds: [] });
+        calls.push('command');
+      }
+    }]])
+  };
+  const makeBase = customId => ({
+    customId,
+    user: { id: userId },
+    isChatInputCommand: () => false,
+    isModalSubmit: () => false,
+    isButton: () => false,
+    isStringSelectMenu: () => false,
+    isUserSelectMenu: () => false,
+    isRepliable: () => true,
+    reply: async payload => calls.push(['reply', payload])
+  });
+  const command = {
+    ...makeBase(),
+    commandName: 'dashboard',
+    isChatInputCommand: () => true,
+    deferReply: async () => {},
+    editReply: async () => {}
+  };
+  const select = {
+    ...makeBase(`user:timezone-select:${userId}`),
+    values: ['Europe/Paris'],
+    isStringSelectMenu: () => true,
+    deferUpdate: async () => calls.push('select-ack'),
+    editReply: async () => calls.push('select')
+  };
+  const button = {
+    ...makeBase(`dashboard:user:${userId}`),
+    isButton: () => true,
+    deferUpdate: async () => calls.push('button-ack'),
+    editReply: async () => calls.push('button')
+  };
+
+  try {
+    database.setUserPreferences(userId, { language: 'en' });
+    await handleInteraction(client, command);
+    assert.deepEqual(calls, ['command']);
+
+    await handleInteraction(client, select);
+    assert.match(calls.at(-1)[1].embeds[0].data.title, /Please wait/);
+    now += 1_001;
+    await handleInteraction(client, select);
+    assert.equal(calls.at(-1), 'select');
+
+    await handleInteraction(client, button);
+    assert.match(calls.at(-1)[1].embeds[0].data.title, /Please wait/);
+    now += 1_001;
+    await handleInteraction(client, button);
+    assert.equal(calls.at(-1), 'button');
+  } finally {
+    Date.now = originalNow;
+    interactionCooldowns.delete(userId);
+    timezoneOrigins.delete(userId);
+    database.deleteUserPreferences(userId);
+    database.closeAll();
+  }
+});
+
+test('opens custom time-zone modals directly from the region select menu', async () => {
+  const userId = `custom-zone-select-${randomUUID()}`;
+  const originalNow = Date.now;
+  let now = 300_000;
+  Date.now = () => now;
+  const calls = [];
+  const interaction = {
+    customId: `user:timezone-select:${userId}`,
+    values: ['custom'],
+    user: { id: userId },
+    isChatInputCommand: () => false,
+    isModalSubmit: () => false,
+    isButton: () => false,
+    isStringSelectMenu: () => true,
+    isUserSelectMenu: () => false,
+    isRepliable: () => true,
+    deferUpdate: async () => calls.push('incorrectly-deferred'),
+    showModal: async modal => calls.push(modal)
+  };
+
+  try {
+    database.setUserPreferences(userId, { language: 'en' });
+    await handleInteraction({ commands: new Map() }, interaction);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].data.title, require('../src/i18n').MESSAGES.en.timezone_modal_title);
+    assert.equal(calls.includes('incorrectly-deferred'), false);
+    assert.equal(timezoneOrigins.has(userId), true);
+  } finally {
+    Date.now = originalNow;
+    interactionCooldowns.delete(userId);
+    const pending = timezoneOrigins.get(userId);
+    if (pending) clearTimeout(pending.timer);
+    timezoneOrigins.delete(userId);
+    database.deleteUserPreferences(userId);
+    database.closeAll();
   }
 });
 
