@@ -6,7 +6,8 @@ const PERMISSIONS = Object.freeze({
   EXPORT_DATA: 'export_data',
   MANAGE_USER_DATA: 'manage_user_data',
   RESET_DATA: 'reset_data',
-  MANAGE_PERMISSIONS: 'manage_permissions'
+  MANAGE_PERMISSIONS: 'manage_permissions',
+  VIEW_PRESENCE: 'view_presence'
 });
 
 const PERMISSION_LABELS = Object.freeze({
@@ -15,7 +16,8 @@ const PERMISSION_LABELS = Object.freeze({
   export_data: 'permission_export_data',
   manage_user_data: 'permission_manage_user_data',
   reset_data: 'permission_reset_data',
-  manage_permissions: 'permission_manage_permissions'
+  manage_permissions: 'permission_manage_permissions',
+  view_presence: 'permission_view_presence'
 });
 
 function isGuildOwner(interaction) {

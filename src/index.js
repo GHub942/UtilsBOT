@@ -5,6 +5,7 @@ const { handleInteraction } = require('./interactions');
 const database = require('./database');
 const { t } = require('./i18n');
 const { acquireProcessLock } = require('./process-lock');
+const presenceMonitor = require('./presence-monitor');
 
 try {
   process.loadEnvFile(path.join(__dirname, '..', '.env'));
@@ -31,7 +32,7 @@ try {
 }
 process.once('exit', releaseProcessLock);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildPresences] });
 client.commands = new Collection();
 
 const commandsPath = path.join(__dirname, 'commands');
@@ -42,6 +43,7 @@ for (const file of fs.readdirSync(commandsPath).filter(file => file.endsWith('.j
 
 client.once(Events.ClientReady, readyClient => {
   logger.info(`Utils logged in as ${readyClient.user.tag}.`);
+  presenceMonitor.start(client, logger);
 });
 
 client.on(Events.InteractionCreate, interaction => {

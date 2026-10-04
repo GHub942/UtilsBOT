@@ -1,4 +1,4 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, RoleSelectMenuBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, EmbedBuilder, MessageFlags, RoleSelectMenuBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
 const database = require('./database');
 const { zoneOptions } = require('./components');
 const { PERMISSIONS, PERMISSION_LABELS, canOpenServerDashboard, hasPermission } = require('./permissions');
@@ -56,8 +56,52 @@ function toolsPayload(interaction) {
 function managementPayload(interaction) {
   const language = database.getUser(owner(interaction)).language;
   const canStats = hasPermission(interaction, PERMISSIONS.VIEW_STATS);
+  const canManagePresence = hasPermission(interaction, PERMISSIONS.MANAGE_PERMISSIONS);
   const stats = canStats ? database.getStats(interaction.guildId) : null;
-  return { embeds: [embed(t(language, 'management_title'), t(language, 'management_description')).addFields({ name: t(language, 'management_audit'), value: canStats ? String(stats.audit) : t(language, 'access_required'), inline: true }, { name: t(language, 'management_permissions'), value: t(language, 'management_permission_note'), inline: true })], components: [row(button(`manage:database:${owner(interaction)}`, t(language, 'database_title'), ButtonStyle.Primary), button(`manage:stats:${owner(interaction)}`, t(language, 'server_stats_title')).setDisabled(!canStats)), row(button(`manage:health:${owner(interaction)}`, t(language, 'health_title')), button(`dashboard:home:${owner(interaction)}`, t(language, 'back')))], flags: MessageFlags.Ephemeral };
+  return { embeds: [embed(t(language, 'management_title'), t(language, 'management_description')).addFields({ name: t(language, 'management_audit'), value: canStats ? String(stats.audit) : t(language, 'access_required'), inline: true }, { name: t(language, 'management_permissions'), value: t(language, 'management_permission_note'), inline: true })], components: [row(button(`manage:database:${owner(interaction)}`, t(language, 'database_title'), ButtonStyle.Primary), button(`manage:stats:${owner(interaction)}`, t(language, 'server_stats_title')).setDisabled(!canStats)), row(button(`manage:health:${owner(interaction)}`, t(language, 'health_title')), button(`manage:presence:${owner(interaction)}`, t(language, 'presence_config_title')).setDisabled(!canManagePresence), button(`dashboard:home:${owner(interaction)}`, t(language, 'back')))], flags: MessageFlags.Ephemeral };
+}
+
+function presenceSettingsPayload(interaction, configuration, notice = '') {
+  const id = owner(interaction);
+  const language = database.getUser(id).language;
+  const accessOptions = ['permission', 'owner', 'nobody', 'everyone'].map(mode => ({
+    label: t(language, `presence_access_${mode}`),
+    value: mode,
+    default: configuration.accessMode === mode
+  }));
+  const channelMenu = new ChannelSelectMenuBuilder()
+    .setCustomId(`presence:channel:${id}`)
+    .setPlaceholder(t(language, 'presence_channel_select'))
+    .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+    .setMinValues(0)
+    .setMaxValues(1);
+  if (configuration.channelId) channelMenu.setDefaultChannels(configuration.channelId);
+  const memberMenu = new UserSelectMenuBuilder()
+    .setCustomId(`presence:members:${id}`)
+    .setPlaceholder(t(language, 'presence_members_select'))
+    .setMinValues(0)
+    .setMaxValues(5);
+  if (configuration.userIds?.length) memberMenu.setDefaultUsers(...configuration.userIds);
+  const monitored = configuration.userIds?.length
+    ? configuration.userIds.map(userId => `<@${userId}>`).join(', ')
+    : t(language, 'presence_no_members');
+  return {
+    embeds: [embed(t(language, 'presence_config_title'), `${notice ? `${notice}\n\n` : ''}${t(language, 'presence_config_description')}`).addFields(
+      { name: t(language, 'presence_channel_select'), value: configuration.channelId ? `<#${configuration.channelId}>` : t(language, 'health_unavailable'), inline: true },
+      { name: t(language, 'presence_members_select'), value: monitored, inline: false },
+      { name: t(language, 'presence_access_select'), value: t(language, `presence_access_${configuration.accessMode || 'owner'}`), inline: true }
+    )],
+    components: [
+      new ActionRowBuilder().addComponents(channelMenu),
+      new ActionRowBuilder().addComponents(memberMenu),
+      new ActionRowBuilder().addComponents(new StringSelectMenuBuilder()
+        .setCustomId(`presence:access:${id}`)
+        .setPlaceholder(t(language, 'presence_access_select'))
+        .addOptions(accessOptions)),
+      row(button(`presence:save:${id}`, t(language, 'presence_save'), ButtonStyle.Success), button(`presence:disable:${id}`, t(language, 'presence_disable'), ButtonStyle.Danger), button(`dashboard:manage:${id}`, t(language, 'back')))
+    ],
+    flags: MessageFlags.Ephemeral
+  };
 }
 
 function healthPayload(interaction) {
@@ -325,4 +369,4 @@ function convertZonePayload(interaction, role, state) {
   return { embeds: [embed(t(language, 'conversion_title'), role === 'source' ? t(language, 'select_source') : t(language, 'select_destination')).addFields({ name: t(language, 'selected_zone'), value: selected })], components: [new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId(`convert:zone-select:${role}:${id}`).setPlaceholder(t(language, key)).addOptions(zoneOptions(null, language))), row(button(`convert:zone-back:${id}`, t(language, 'back_categories')))], flags: MessageFlags.Ephemeral };
 }
 
-module.exports = { convertPayload, convertZonePayload, dashboardPayload, databasePayload, healthPayload, journalPayload, languageConfirmationPayload, managementPayload, permissionsPayload, timestampPayload, timestampZonePayload, toolsPayload, userDataPayload, userPayload };
+module.exports = { convertPayload, convertZonePayload, dashboardPayload, databasePayload, healthPayload, journalPayload, languageConfirmationPayload, managementPayload, permissionsPayload, presenceSettingsPayload, timestampPayload, timestampZonePayload, toolsPayload, userDataPayload, userPayload };

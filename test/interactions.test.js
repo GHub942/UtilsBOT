@@ -555,13 +555,25 @@ test('resets a guild only after the reset modal contains the exact uppercase wor
   let now = originalNow();
   const originalResetGuild = database.resetGuild;
   const calls = [];
+  let monitoredMessageDeleted = 0;
   let resetCount = 0;
   database.resetGuild = (...args) => { resetCount += 1; calls.push(['reset', ...args]); };
+  const monitoredChannel = {
+    messages: {
+      fetch: async () => ({ delete: async () => { monitoredMessageDeleted += 1; } })
+    }
+  };
+  const client = {
+    guilds: {
+      cache: new Map([[guildId, { channels: { cache: new Map([['presence-channel', monitoredChannel]]) } }]])
+    }
+  };
   const buttonInteraction = {
     customId: `db:reset-confirm:${userId}`,
     user: { id: userId },
     guildId,
     guild: { ownerId: userId },
+    client,
     isChatInputCommand: () => false,
     isModalSubmit: () => false,
     isButton: () => true,
@@ -575,6 +587,7 @@ test('resets a guild only after the reset modal contains the exact uppercase wor
     user: { id: userId },
     guildId,
     guild: { ownerId: userId },
+    client,
     fields: { getTextInputValue: () => 'Reset' },
     isChatInputCommand: () => false,
     isModalSubmit: () => true,
@@ -584,6 +597,14 @@ test('resets a guild only after the reset modal contains the exact uppercase wor
 
   try {
     database.setUserPreferences(userId, { language: 'en' });
+    database.setGuildSetting(guildId, require('../src/presence-monitor').SETTING_KEY, {
+      channelId: 'presence-channel',
+      userIds: ['tracked-member'],
+      accessMode: 'owner',
+      messageId: 'presence-message',
+      onlineSince: {},
+      language: 'en'
+    });
     Date.now = () => now;
     await handleInteraction({ commands: new Map() }, buttonInteraction);
     const modal = calls[0][1];
@@ -606,6 +627,7 @@ test('resets a guild only after the reset modal contains the exact uppercase wor
     now += 1_000;
     await handleInteraction({ commands: new Map() }, exactInteraction);
     assert.equal(resetCount, 1);
+    assert.equal(monitoredMessageDeleted, 1);
     assert.deepEqual(calls.find(call => call[0] === 'reset').slice(1), [guildId, userId]);
   } finally {
     Date.now = originalNow;
@@ -614,6 +636,7 @@ test('resets a guild only after the reset modal contains the exact uppercase wor
     pendingServerResets.clear();
     database.deleteUserPreferences(userId);
     database.closeAll();
+    require('node:fs').rmSync(require('node:path').join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
   }
 });
 

@@ -67,6 +67,18 @@ function getGuild(guildId) {
   return { settings, permissions, audit };
 }
 
+function getGuildSetting(guildId, key) {
+  const row = openDatabase('guild', guildId).prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? JSON.parse(row.value) : undefined;
+}
+
+function setGuildSetting(guildId, key, value) {
+  openDatabase('guild', guildId)
+    .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, JSON.stringify(value));
+  return value;
+}
+
 function getUser(userId) {
   const database = openDatabase('user', userId);
   const values = Object.fromEntries(database.prepare('SELECT key, value FROM preferences').all().map(row => [row.key, JSON.parse(row.value)]));
@@ -276,6 +288,7 @@ module.exports = {
   exportGuild,
   exportAudit,
   getGuild,
+  getGuildSetting,
   getPermissions,
   getStats,
   getAuditActions,
@@ -290,6 +303,7 @@ module.exports = {
   revokePermission,
   revokeRolePermission,
   resetGuild,
+  setGuildSetting,
   setUserPreferences,
   updateUser: setUserPreferences,
   AUDIT_MAX_ENTRIES,

@@ -46,6 +46,8 @@ Environment variables:
 - Bot responses, including user-data views, administrative panels, exports, and errors, use embeds.
 - Every interaction has a one-second per-user cooldown. Operational-status refresh has an additional three-second per-user cooldown.
 - The operational status view reports readiness, Discord-relative uptime, gateway latency, aggregate server/member counts, shards, loaded commands, Node.js version, process memory, and current-server audit-log size. It can be refreshed and excludes credentials and individual user data.
+- Server owners and Utils permission managers can configure a public presence monitor for up to five selected members. The bot posts one embed in the chosen text channel, showing each selected member's online/idle/do-not-disturb/offline state, current activity, and the approximate time they have been online. It refreshes every five minutes and includes a manual refresh button.
+- The presence monitor's refresh policy can be set to holders of the `view_presence` Utils permission, the server owner, nobody, or everyone. This policy controls who can use the refresh button; who can read the published embed is controlled by the selected Discord channel's normal visibility permissions.
 
 The removed `/timezone` and `/timestamp` application commands are not registered. Use the corresponding tools under `/dashboard utils`.
 
@@ -54,6 +56,8 @@ The removed `/timezone` and `/timestamp` application commands are not registered
 Only explicit Utils permissions are used for delegated access; there is no whitelist. Existing whitelist records are removed the first time a guild database is opened after this update. Whitelist-derived access is not migrated: grant any required access again through the permissions panel.
 
 The guild owner has all Utils permissions and can assign any grantable permission, including permission management, to individual members or server roles. Other members receive only permissions explicitly assigned by the owner. Role permissions apply to all current and future members of the role. A delegated permission manager can grant or revoke only permissions they themselves hold; only the owner can delegate or revoke permission management. Discord's `Manage Server` permission does not grant Utils access.
+
+Presence monitoring uses Discord's privileged **Presence Intent**. Enable it in the Discord Developer Portal under the bot's Privileged Gateway Intents before starting the bot. The bot stores the selected member IDs, channel/message IDs, refresh policy, and observed online start times in that guild's local settings. Use a restricted text channel if the status information should not be visible to everyone on the server. Disabling the monitor removes its published message.
 
 Server reset requires two steps: an authorized member opens the confirmation form and enters the exact uppercase text `RESET`.
 

@@ -10,6 +10,7 @@ const { PERMISSIONS, PERMISSION_LABELS, canManagePermission, canOpenServerDashbo
 const { acknowledgeCommand, acknowledgeComponent } = require('./interaction-responses');
 const { t } = require('./i18n');
 const logger = require('./logger');
+const presenceMonitor = require('./presence-monitor');
 
 const selections = new Map();
 const journalFilters = new Map();
@@ -105,12 +106,19 @@ async function handleInteraction(client, interaction) {
     && ['timestamp:zone-select:', 'user:timezone-select:', 'convert:zone-select:'].some(prefix => interaction.customId.startsWith(prefix))
     && interaction.values[0] === 'custom';
   const opensModal = opensModalButton || opensCustomZoneModal;
-  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.()) && !opensModal) {
+  const isComponentInteraction = interaction.isButton()
+    || interaction.isStringSelectMenu()
+    || interaction.isUserSelectMenu()
+    || interaction.isRoleSelectMenu?.()
+    || interaction.isChannelSelectMenu?.();
+  if (isComponentInteraction && !opensModal) {
     interaction = await acknowledgeComponent(interaction);
   }
-  if (!interaction.customId || owns(interaction.customId, interaction.user.id)) {
+  const isSharedPresenceRefresh = /^presence:refresh:[A-Za-z0-9_-]+$/.test(interaction.customId || '')
+    && interaction.guildId === interaction.customId.split(':')[2];
+  if (!interaction.customId || owns(interaction.customId, interaction.user.id) || isSharedPresenceRefresh) {
     if (interaction.isButton()) return handleButton(interaction);
-    if (interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.()) return handleSelect(interaction);
+    if (interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.() || interaction.isChannelSelectMenu?.()) return handleSelect(interaction);
   } else if (interaction.isRepliable()) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_other_owner')));
   if (interaction.isRepliable()) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_unknown_action')));
 }
@@ -224,6 +232,12 @@ async function handleServerResetModal(interaction) {
   if (interaction.fields.getTextInputValue('confirmation') !== 'RESET') {
     return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle(t(language, 'server_reset_phrase_mismatch'))], flags: MessageFlags.Ephemeral });
   }
+  await presenceMonitor.configure(interaction.client, interaction.guildId, {
+    channelId: null,
+    userIds: [],
+    accessMode: 'nobody',
+    language
+  });
   database.resetGuild(interaction.guildId, interaction.user.id);
   return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(t(language, 'server_reset_done'))], flags: MessageFlags.Ephemeral });
 }
@@ -315,6 +329,15 @@ async function handleButton(interaction) {
     if (action === 'stats') return manager(interaction, PERMISSIONS.VIEW_STATS) ? showStats(interaction) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_stats_permission')));
     if (action === 'health') return canOpenServerDashboard(interaction) ? interaction.update(panels.healthPayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_no_server_access')));
     if (action === 'health-refresh') return canOpenServerDashboard(interaction) ? interaction.update(panels.healthPayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_no_server_access')));
+    if (action === 'presence') {
+      if (!hasPermission(interaction, PERMISSIONS.MANAGE_PERMISSIONS)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_manage_denied')));
+      const config = presenceMonitor.getConfiguration(interaction.guildId);
+      selections.set(selectionKey(interaction), {
+        ...(selections.get(selectionKey(interaction)) || {}),
+        presenceMonitor: { channelId: config.channelId, userIds: config.userIds || [], accessMode: config.accessMode || 'owner' }
+      });
+      return interaction.update(panels.presenceSettingsPayload(interaction, config));
+    }
   }
   if (area === 'db') {
     if (action === 'users') return manager(interaction, PERMISSIONS.VIEW_DATA) ? interaction.update(panels.userDataPayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_data_permission')));
@@ -346,6 +369,39 @@ async function handleButton(interaction) {
     if (action === 'timestamp') return timestamp.execute(interaction);
     if (action === 'timezone') return convert.execute(interaction);
     if (action === 'back') return interaction.update(panels.toolsPayload(interaction));
+  }
+  if (area === 'presence') {
+    if (action === 'refresh') {
+      if (interaction.customId.split(':')[2] !== interaction.guildId) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_access_denied')));
+      return presenceMonitor.refreshInteraction(interaction);
+    }
+    if (!interaction.guildId || !hasPermission(interaction, PERMISSIONS.MANAGE_PERMISSIONS)) {
+      return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_manage_denied')));
+    }
+    const key = selectionKey(interaction);
+    const state = selections.get(key)?.presenceMonitor || {};
+    const language = database.getUser(interaction.user.id).language;
+    if (action === 'save') {
+      const channel = state.channelId ? await interaction.guild.channels.fetch(state.channelId) : null;
+      if (!channel?.isTextBased() || typeof channel.send !== 'function') {
+        return interaction.update(panels.presenceSettingsPayload(interaction, { ...presenceMonitor.getConfiguration(interaction.guildId), ...state }, t(language, 'presence_need_channel')));
+      }
+      if (!state.userIds?.length || state.userIds.length > 5) {
+        return interaction.update(panels.presenceSettingsPayload(interaction, { ...presenceMonitor.getConfiguration(interaction.guildId), ...state }, t(language, 'presence_need_members')));
+      }
+      const configuration = {
+        channelId: state.channelId,
+        userIds: state.userIds,
+        accessMode: state.accessMode || 'owner',
+        language
+      };
+      await presenceMonitor.configure(interaction.client, interaction.guildId, configuration);
+      return interaction.update(panels.presenceSettingsPayload(interaction, presenceMonitor.getConfiguration(interaction.guildId), t(language, 'presence_saved')));
+    }
+    if (action === 'disable') {
+      await presenceMonitor.configure(interaction.client, interaction.guildId, { channelId: null, userIds: [], accessMode: state.accessMode || 'owner', language });
+      return interaction.update(panels.presenceSettingsPayload(interaction, presenceMonitor.getConfiguration(interaction.guildId), t(language, 'presence_disabled')));
+    }
   }
   if (area === 'data') {
     const state = selections.get(selectionKey(interaction));
@@ -463,6 +519,18 @@ async function handleSelect(interaction) {
     draft[role] = value;
     convert.drafts.set(interaction.user.id, draft);
     return interaction.update(panels.convertPayload(interaction, draft));
+  }
+  if (area === 'presence') {
+    const key = selectionKey(interaction);
+    const selection = selections.get(key) || {};
+    const state = selection.presenceMonitor || { ...presenceMonitor.getConfiguration(interaction.guildId) };
+    if (action === 'channel') state.channelId = interaction.values[0] || null;
+    else if (action === 'members') state.userIds = [...new Set(interaction.values)].slice(0, 5);
+    else if (action === 'access' && presenceMonitor.VALID_ACCESS_MODES.has(interaction.values[0])) state.accessMode = interaction.values[0];
+    else return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_invalid_preference')));
+    selection.presenceMonitor = state;
+    selections.set(key, selection);
+    return interaction.update(panels.presenceSettingsPayload(interaction, { ...presenceMonitor.getConfiguration(interaction.guildId), ...state }));
   }
   if (area === 'timestamp' && action === 'zone-select') {
     const value = interaction.values[0];
