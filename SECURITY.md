@@ -16,8 +16,9 @@ Include the affected version, impact, reproduction steps, and any suggested miti
 - Run only one bot process against a given data directory; the bot enforces this with a process lock.
 - Use a dedicated bot account and grant only the Discord permissions it needs.
 - Only the server owner has implicit full access. Discord's `Manage Server` permission does not grant Utils access.
+- Utils permissions can be assigned to individual members or roles. Assign role permissions carefully because every current and future member of the role inherits that access.
 - Give Utils permissions only to trusted members. Only the owner can delegate permission management; delegated managers cannot grant permissions they do not hold or delegate the manager role.
-- Server reset and user-data deletion are protected by a second confirmation that expires after five seconds.
+- Server reset requires a confirmation form with the exact uppercase phrase `RESET`. Other destructive data actions use a second confirmation that expires after five seconds.
 - Store exported data securely and delete it when it is no longer needed.
 - Set `LOG_LEVEL` to `debug` only when diagnosing an issue; review logs before sharing them.
 - Rotate a bot token immediately if it is exposed, and update the deployment environment.

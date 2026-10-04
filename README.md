@@ -35,16 +35,16 @@ Environment variables:
 - Timestamp creation displays a Discord preview, Unix timestamp, and copy-ready Discord formats.
 - Time-zone conversion handles IANA time zones, fixed UTC offsets, seasonal offsets, and daylight-saving transitions.
 - Preference controls are grouped by region, dates, times, and language/privacy. Language previews show a relative reset time and require confirmation within 10 seconds.
-- The region menu offers ten city-based IANA zones plus UTC/GMT. Custom input accepts supported IANA zones, fixed abbreviations, and UTC/GMT offsets.
+- The region menu offers ten city-based IANA zones plus one UTC/GMT option. The custom time-zone option remains selectable regardless of the current zone. Custom input accepts supported IANA zones, fixed abbreviations, and UTC/GMT offsets.
 - Choosing UTC/GMT saves an automatic display preference: UTC is shown in Central European winter, GMT in summer, and both represent a fixed +00:00 offset.
 - Time conversion asks for both source and destination zones. The destination initially follows the user's saved time-zone preference.
 - Timestamp input pads short dates, expands two-digit years, and fills in omitted seconds.
 - Only the guild owner has implicit full access. Every other member, including members with Discord's `Manage Server` permission, must be explicitly granted the relevant Utils permission.
 - Data exports and the audit journal are available only to members with the corresponding Utils permission.
 - The server audit journal can be filtered by multiple members and action types at once; pagination and JSON export preserve the active filters.
-- Destructive data operations require a second confirmation within five seconds; otherwise, they are cancelled.
-- Privacy and user-data management screens use plain text instead of embeds.
-- The operational status view reports readiness, uptime, gateway latency, aggregate server/member counts, shards, loaded commands, Node.js version, process memory, and current-server audit-log size. It excludes credentials and individual user data.
+- User-data and self-service deletions require a second confirmation within five seconds; server reset requires the exact `RESET` confirmation phrase.
+- Personal “View my data” uses an embed; administrator-facing user-data review remains plain text.
+- The operational status view reports readiness, Discord-relative uptime, gateway latency, aggregate server/member counts, shards, loaded commands, Node.js version, process memory, and current-server audit-log size. It can be refreshed and excludes credentials and individual user data.
 
 The removed `/timezone` and `/timestamp` application commands are not registered. Use the corresponding tools under `/dashboard utils`.
 
@@ -52,13 +52,15 @@ The removed `/timezone` and `/timestamp` application commands are not registered
 
 Only explicit Utils permissions are used for delegated access; there is no whitelist. Existing whitelist records are removed the first time a guild database is opened after this update. Whitelist-derived access is not migrated: grant any required access again through the permissions panel.
 
-The guild owner has all Utils permissions and can assign any grantable permission, including permission management. Other members receive only permissions explicitly assigned by the owner. A delegated permission manager can grant or revoke only permissions they themselves hold; only the owner can delegate or revoke permission management. Discord's `Manage Server` permission does not grant Utils access.
+The guild owner has all Utils permissions and can assign any grantable permission, including permission management, to individual members or server roles. Other members receive only permissions explicitly assigned by the owner. Role permissions apply to all current and future members of the role. A delegated permission manager can grant or revoke only permissions they themselves hold; only the owner can delegate or revoke permission management. Discord's `Manage Server` permission does not grant Utils access.
+
+Server reset requires two steps: an authorized member opens the confirmation form and enters the exact uppercase text `RESET`.
 
 ## Storage and privacy
 
 The bot stores guild data in `data/guilds/<guild-id>/data.sqlite` and personal preferences in `data/users/<user-id>/data.sqlite`. Guild databases include explicit permissions, server settings, and an audit log. User databases contain preferences. SQLite uses write-ahead logging.
 
-Users can view their own stored preferences and current-server Utils permissions under Preferences > Language & privacy > Privacy. They can separately delete bot preferences or remove their assigned Utils permissions and identifying audit entries from the current server. These self-service actions do not affect permissions granted on other servers. Both self-service deletion and server-wide or user-data deletion require two confirmations; the final confirmation expires after five seconds. Server members can export or delete another user's data only when explicitly assigned the corresponding Utils permission. Keep `.env` and the `data/` directory private, restrict access to backups, and never commit tokens or database files.
+Users can view their own stored preferences and current-server Utils permissions in an embed under Preferences > Language & privacy > Privacy. They can separately delete bot preferences or remove their assigned Utils permissions and identifying audit entries from the current server. These self-service actions do not affect permissions granted on other servers. Self-service and user-data deletion use a second confirmation that expires after five seconds. Server reset instead requires the exact uppercase phrase `RESET`. Server members can export or delete another user's data only when explicitly assigned the corresponding Utils permission; administrator-facing user-data review is plain text. Keep `.env` and the `data/` directory private, restrict access to backups, and never commit tokens or database files.
 
 ## Database backups
 

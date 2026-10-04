@@ -2,8 +2,9 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { randomUUID } = require('node:crypto');
 const database = require('../src/database');
+const { PERMISSIONS } = require('../src/permissions');
 const timestamp = require('../src/commands/timestamp');
-const { beginDeletionConfirmation, cancelLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, journalFilters, pendingDeletions, pendingLanguages, previewLanguage } = require('../src/interactions');
+const { beginDeletionConfirmation, cancelLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage } = require('../src/interactions');
 
 test('denies server statistics access without permission and responds ephemerally', async () => {
   const userId = `interaction-test-${randomUUID()}`;
@@ -271,6 +272,107 @@ test('accepts multi-value journal filters and resets to the first filtered page'
   } finally {
     database.hasPermission = originalHasPermission;
     journalFilters.delete(`${guildId}:${userId}`);
+    database.closeAll();
+  }
+});
+
+test('routes a role select through permission grant and revoke', async () => {
+  const userId = `role-manager-${randomUUID()}`;
+  const guildId = `role-manager-guild-${randomUUID()}`;
+  const roleId = `managed-role-${randomUUID()}`;
+  const calls = [];
+  const makeInteraction = (customId, values = []) => ({
+    customId,
+    values,
+    user: { id: userId },
+    guildId,
+    guild: { ownerId: userId },
+    isChatInputCommand: () => false,
+    isModalSubmit: () => false,
+    isButton: () => customId.startsWith('perm:enable:') || customId.startsWith('perm:disable:'),
+    isStringSelectMenu: () => customId.startsWith('perm:type:'),
+    isUserSelectMenu: () => false,
+    isRoleSelectMenu: () => customId.startsWith('perm:role:'),
+    isRepliable: () => true,
+    deferUpdate: async () => {},
+    editReply: async payload => calls.push(payload)
+  });
+
+  try {
+    database.setUserPreferences(userId, { language: 'en' });
+    await handleInteraction({ commands: new Map() }, makeInteraction(`perm:role:${userId}`, [roleId]));
+    await handleInteraction({ commands: new Map() }, makeInteraction(`perm:type:${userId}`, [PERMISSIONS.VIEW_STATS]));
+    await handleInteraction({ commands: new Map() }, makeInteraction(`perm:enable:${userId}`));
+    assert.equal(database.hasPermission(guildId, 'member-with-role', PERMISSIONS.VIEW_STATS, [roleId]), true);
+    assert.match(calls.at(-1).embeds[0].data.fields[0].value, new RegExp(`<@&${roleId}>`));
+
+    await handleInteraction({ commands: new Map() }, makeInteraction(`perm:disable:${userId}`));
+    assert.equal(database.hasPermission(guildId, 'member-with-role', PERMISSIONS.VIEW_STATS, [roleId]), false);
+  } finally {
+    database.deleteUserData(userId);
+    database.closeAll();
+    require('node:fs').rmSync(require('node:path').join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
+  }
+});
+
+test('resets a guild only after the reset modal contains the exact uppercase word RESET', async () => {
+  const userId = `reset-confirm-${randomUUID()}`;
+  const guildId = `reset-guild-${randomUUID()}`;
+  const originalResetGuild = database.resetGuild;
+  const calls = [];
+  let resetCount = 0;
+  database.resetGuild = (...args) => { resetCount += 1; calls.push(['reset', ...args]); };
+  const buttonInteraction = {
+    customId: `db:reset-confirm:${userId}`,
+    user: { id: userId },
+    guildId,
+    guild: { ownerId: userId },
+    isChatInputCommand: () => false,
+    isModalSubmit: () => false,
+    isButton: () => true,
+    isStringSelectMenu: () => false,
+    isUserSelectMenu: () => false,
+    isRepliable: () => true,
+    showModal: async modal => calls.push(['modal', modal])
+  };
+  const modalInteraction = customId => ({
+    customId,
+    user: { id: userId },
+    guildId,
+    guild: { ownerId: userId },
+    fields: { getTextInputValue: () => 'Reset' },
+    isChatInputCommand: () => false,
+    isModalSubmit: () => true,
+    isRepliable: () => true,
+    reply: async payload => calls.push(['reply', payload])
+  });
+
+  try {
+    database.setUserPreferences(userId, { language: 'en' });
+    await handleInteraction({ commands: new Map() }, buttonInteraction);
+    const modal = calls[0][1];
+    assert.equal(modal.data.title, require('../src/i18n').MESSAGES.en.server_reset_phrase_title);
+    const modalId = `db:reset-modal:${pendingServerResets.keys().next().value}:${userId}`;
+    await handleInteraction({ commands: new Map() }, modalInteraction(modalId));
+    assert.equal(resetCount, 0);
+    assert.match(calls.at(-1)[1].embeds[0].data.title, /RESET/);
+    assert.equal(pendingServerResets.size, 0);
+
+    const secondButton = { ...buttonInteraction, showModal: async value => calls.push(['modal', value]) };
+    await handleInteraction({ commands: new Map() }, secondButton);
+    const secondModalId = `db:reset-modal:${pendingServerResets.keys().next().value}:${userId}`;
+    const exactInteraction = {
+      ...modalInteraction(secondModalId),
+      fields: { getTextInputValue: () => 'RESET' }
+    };
+    await handleInteraction({ commands: new Map() }, exactInteraction);
+    assert.equal(resetCount, 1);
+    assert.deepEqual(calls.find(call => call[0] === 'reset').slice(1), [guildId, userId]);
+  } finally {
+    database.resetGuild = originalResetGuild;
+    for (const pending of pendingServerResets.values()) clearTimeout(pending.timer);
+    pendingServerResets.clear();
+    database.deleteUserPreferences(userId);
     database.closeAll();
   }
 });

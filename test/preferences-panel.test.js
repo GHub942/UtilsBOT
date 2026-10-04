@@ -19,8 +19,10 @@ test('renders preferences as grouped category and option select menus within Dis
     const languageOptions = panels.userPayload(interaction, '', 'language-options');
     const privacyDeletePage = panels.userPayload(interaction, '', 'privacy-delete-preferences');
     const defaultPage = panels.userPayload(interaction);
+    const personalDataPage = panels.userPayload(interaction, '', 'privacy-data');
+    const administratorUserData = panels.userDataPayload(interaction);
 
-    for (const page of [regionPage, datePage, timePage, languagePage, privacyPage, privacyDataPage, languageOptions, privacyDeletePage, defaultPage]) {
+    for (const page of [regionPage, datePage, timePage, languagePage, privacyPage, privacyDataPage, languageOptions, privacyDeletePage, defaultPage, personalDataPage, administratorUserData]) {
       assert.ok(page.components.length <= 5);
       assert.ok(page.components.every(row => row.components.length <= 5));
       const customIds = page.components.flatMap(row => row.components)
@@ -42,10 +44,15 @@ test('renders preferences as grouped category and option select menus within Dis
       assert.equal(page.components.some(row => row.components.some(component => component.data.custom_id.startsWith(`user:category:`))), false);
     }
     for (const page of [privacyPage, privacyDataPage, privacyDeletePage]) {
-      assert.deepEqual(page.embeds, []);
+      assert.equal(page.embeds.length, 1);
     }
+    assert.equal(personalDataPage.embeds.length, 1);
+    assert.equal(administratorUserData.embeds.length, 0);
     const zoneMenu = regionPage.components.flatMap(row => row.components).find(component => component.data.custom_id === `user:timezone-select:${userId}`);
-    assert.deepEqual(zoneMenu.options.map(option => option.data.value), ['UTC', 'GMT', ...ZONES.map(([zone]) => zone), 'custom']);
+    assert.deepEqual(zoneMenu.options.map(option => option.data.value), ['UTC', ...ZONES.map(([zone]) => zone), 'custom']);
+    assert.equal(zoneMenu.options[0].data.label, 'UTC/GMT');
+    assert.equal(zoneMenu.options.filter(option => option.data.label === 'UTC/GMT').length, 1);
+    assert.equal(zoneMenu.options.at(-1).data.label, require('../src/i18n').MESSAGES.fr.custom_zone);
     assert.equal(regionPage.components[0].components[0].data.type, 2);
     assert.equal(datePage.components[0].components[0].data.type, 2);
   } finally {
@@ -72,15 +79,18 @@ test('offers permission delegation only to the server owner and reports non-sens
   try {
     const ownerPage = panels.permissionsPayload(makeInteraction(userId));
     const nonOwnerPage = panels.permissionsPayload(makeInteraction('another-user'));
-    const ownerOptions = ownerPage.components[1].components[0].options.map(option => option.data.value);
-    const nonOwnerOptions = nonOwnerPage.components[1].components[0].options.map(option => option.data.value);
+    assert.equal(ownerPage.components[1].components[0].data.type, 6);
+    assert.equal(nonOwnerPage.components[1].components[0].data.type, 6);
+    const ownerOptions = ownerPage.components[2].components[0].options.map(option => option.data.value);
+    const nonOwnerOptions = nonOwnerPage.components[2].components[0].options.map(option => option.data.value);
     assert.ok(ownerOptions.includes('manage_permissions'));
     assert.equal(nonOwnerOptions.includes('manage_permissions'), false);
 
     const health = panels.healthPayload(makeInteraction(userId)).embeds[0].data;
     assert.equal(health.title, require('../src/i18n').MESSAGES.fr.health_title);
-    assert.ok(health.fields.some(field => field.name === require('../src/i18n').MESSAGES.fr.health_members && field.value === '24'));
-    assert.ok(health.fields.some(field => field.name === require('../src/i18n').MESSAGES.fr.health_runtime));
+    assert.ok(health.fields.some(field => field.name.endsWith(require('../src/i18n').MESSAGES.fr.health_members) && field.value === '`24`'));
+    assert.ok(health.fields.some(field => field.name.endsWith(require('../src/i18n').MESSAGES.fr.health_runtime)));
+    assert.ok(health.fields.some(field => field.name.endsWith(require('../src/i18n').MESSAGES.fr.health_uptime) && /<t:\d+:R>/.test(field.value)));
     assert.equal(JSON.stringify(health).includes(process.env.DISCORD_TOKEN || 'secret'), false);
 
     database.addAudit(guildId, 'timestamp.create', userId, 'UTC');

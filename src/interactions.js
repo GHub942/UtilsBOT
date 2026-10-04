@@ -1,4 +1,4 @@
-const { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, UserSelectMenuBuilder } = require('discord.js');
+const { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, UserSelectMenuBuilder } = require('discord.js');
 const { randomUUID } = require('node:crypto');
 const dashboard = require('./commands/dashboard');
 const timestamp = require('./commands/timestamp');
@@ -6,7 +6,7 @@ const convert = require('./commands/convert');
 const panels = require('./panels');
 const database = require('./database');
 const { isSelectableZone } = require('./time');
-const { PERMISSIONS, PERMISSION_LABELS, canManagePermission, canOpenServerDashboard, grantPermission, hasPermission, revokePermission } = require('./permissions');
+const { PERMISSIONS, PERMISSION_LABELS, canManagePermission, canOpenServerDashboard, grantPermission, grantRolePermission, hasPermission, revokePermission, revokeRolePermission } = require('./permissions');
 const { acknowledgeCommand, acknowledgeComponent } = require('./interaction-responses');
 const { t } = require('./i18n');
 const logger = require('./logger');
@@ -15,6 +15,7 @@ const selections = new Map();
 const journalFilters = new Map();
 const pendingLanguages = new Map();
 const pendingDeletions = new Map();
+const pendingServerResets = new Map();
 
 function cancelPendingLanguage(userId) {
   const pending = pendingLanguages.get(userId);
@@ -43,6 +44,7 @@ async function handleInteraction(client, interaction) {
   }
   if (interaction.isModalSubmit()) {
     cancelPendingLanguage(interaction.user.id);
+    if (interaction.customId.startsWith('db:reset-modal:')) return handleServerResetModal(interaction);
     if (interaction.customId.startsWith('timestamp:field:')) return timestamp.handleModal(interaction);
     if (interaction.customId === 'timestamp:zone:modal') return timestamp.handleZoneModal(interaction);
     if (interaction.customId.startsWith('convert:field:')) return convert.handleModal(interaction);
@@ -50,24 +52,24 @@ async function handleInteraction(client, interaction) {
     if (interaction.customId === 'user:timezone:modal') return handleTimezoneModal(interaction);
     return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_expired_form')));
   }
-  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu())
+  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.())
     && !/^user:language-(confirm|cancel):/.test(interaction.customId)) {
     cancelPendingLanguage(interaction.user.id);
   }
-  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu())
+  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.())
     && !/^danger:(confirm|cancel):/.test(interaction.customId)) {
     clearPendingDeletion(deletionKey(interaction));
   }
-  const opensModal = interaction.isButton() && /^(timestamp:(date|time)|convert:(date|time|source):)/.test(interaction.customId);
+  const opensModal = interaction.isButton() && /^(timestamp:(date|time)|convert:(date|time|source):|db:reset-confirm:)/.test(interaction.customId);
   const selectsCustomZone = interaction.isStringSelectMenu()
     && (interaction.customId === `timestamp:zone-select:${interaction.user.id}` || interaction.customId === `user:timezone-select:${interaction.user.id}` || interaction.customId.startsWith(`convert:zone-select:`))
     && interaction.values[0] === 'custom';
-  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu()) && !opensModal && !selectsCustomZone) {
+  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.()) && !opensModal && !selectsCustomZone) {
     interaction = await acknowledgeComponent(interaction);
   }
   if (!interaction.customId || owns(interaction.customId, interaction.user.id)) {
     if (interaction.isButton()) return handleButton(interaction);
-    if (interaction.isStringSelectMenu() || interaction.isUserSelectMenu()) return handleSelect(interaction);
+    if (interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.()) return handleSelect(interaction);
   } else if (interaction.isRepliable()) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_other_owner')));
   if (interaction.isRepliable()) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_unknown_action')));
 }
@@ -115,8 +117,7 @@ function beginDeletionConfirmation(interaction, type, subjectId = null) {
   const confirmationKey = {
     preferences: 'delete_preferences_final',
     permissions: 'delete_permissions_final',
-    'managed-user-data': 'delete_user_data_final',
-    'server-reset': 'delete_server_data_final'
+    'managed-user-data': 'delete_user_data_final'
   }[type] || 'delete_second_confirmation';
   const subject = subjectId ? `\n${t(language, 'deletion_subject')}: <@${subjectId}>` : '';
   const payload = {
@@ -140,6 +141,54 @@ function beginDeletionConfirmation(interaction, type, subjectId = null) {
   return interaction.update(payload);
 }
 
+function openServerResetModal(interaction) {
+  const language = database.getUser(interaction.user.id).language;
+  const nonce = randomUUID().replace(/-/g, '').slice(0, 16);
+  const pending = {
+    guildId: interaction.guildId,
+    userId: interaction.user.id,
+    expiresAt: Date.now() + 5 * 60_000,
+    timer: null
+  };
+  pending.timer = setTimeout(() => pendingServerResets.delete(nonce), 5 * 60_000);
+  pending.timer.unref();
+  pendingServerResets.set(nonce, pending);
+  const input = new TextInputBuilder()
+    .setCustomId('confirmation')
+    .setLabel(t(language, 'server_reset_phrase_label'))
+    .setPlaceholder('RESET')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(5)
+    .setMaxLength(5)
+    .setRequired(true);
+  const modal = new ModalBuilder()
+    .setCustomId(`db:reset-modal:${nonce}:${interaction.user.id}`)
+    .setTitle(t(language, 'server_reset_phrase_title'))
+    .addComponents(new ActionRowBuilder().addComponents(input));
+  return interaction.showModal(modal);
+}
+
+async function handleServerResetModal(interaction) {
+  const [, , nonce] = interaction.customId.split(':');
+  const pending = pendingServerResets.get(nonce);
+  const language = database.getUser(interaction.user.id).language;
+  if (!pending || pending.userId !== interaction.user.id || pending.guildId !== interaction.guildId || Date.now() > pending.expiresAt) {
+    if (pending) clearTimeout(pending.timer);
+    pendingServerResets.delete(nonce);
+    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle(t(language, 'server_reset_expired'))], flags: MessageFlags.Ephemeral });
+  }
+  clearTimeout(pending.timer);
+  pendingServerResets.delete(nonce);
+  if (!manager(interaction, PERMISSIONS.RESET_DATA)) {
+    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle(t(language, 'error_reset_permission'))], flags: MessageFlags.Ephemeral });
+  }
+  if (interaction.fields.getTextInputValue('confirmation') !== 'RESET') {
+    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle(t(language, 'server_reset_phrase_mismatch'))], flags: MessageFlags.Ephemeral });
+  }
+  database.resetGuild(interaction.guildId, interaction.user.id);
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(t(language, 'server_reset_done'))], flags: MessageFlags.Ephemeral });
+}
+
 async function finishDeletionConfirmation(interaction, action, nonce) {
   const key = deletionKey(interaction);
   const pending = pendingDeletions.get(key);
@@ -159,12 +208,6 @@ async function finishDeletionConfirmation(interaction, action, nonce) {
     clearPendingDeletion(key);
     return interaction.update({ content: t(pending.language, 'denied'), embeds: [], components: [] });
   }
-  if (pending.type === 'server-reset'
-    && (!interaction.guildId || interaction.guildId !== pending.guildId || !manager(interaction, PERMISSIONS.RESET_DATA))) {
-    clearPendingDeletion(key);
-    return interaction.update({ content: t(pending.language, 'denied'), embeds: [], components: [] });
-  }
-
   clearPendingDeletion(key);
   if (pending.type === 'preferences') {
     database.deleteUserPreferences(interaction.user.id);
@@ -184,10 +227,6 @@ async function finishDeletionConfirmation(interaction, action, nonce) {
       embeds: [],
       components: []
     });
-  }
-  if (pending.type === 'server-reset') {
-    database.resetGuild(pending.guildId, interaction.user.id);
-    return interaction.update({ content: t(pending.language, 'server_reset_done'), embeds: [], components: [] });
   }
   return interaction.update({ content: t(pending.language, 'generic_error'), embeds: [], components: [] });
 }
@@ -280,18 +319,21 @@ async function handleButton(interaction) {
     if (!manager(interaction, PERMISSIONS.MANAGE_PERMISSIONS)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_admin_permission')));
     if (action === 'enable' || action === 'disable') {
       const selection = selections.get(selectionKey(interaction));
-      if (!selection?.memberId || !selection.permission) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_permission_selection')));
+      if ((!selection?.memberId && !selection?.roleId) || !selection.permission) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_permission_selection')));
       if (!Object.hasOwn(PERMISSION_LABELS, selection.permission) || !canManagePermission(interaction, selection.permission)) {
         return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_permission_delegation')));
       }
-      if (action === 'enable') grantPermission(interaction.guildId, selection.memberId, selection.permission, interaction.user.id);
+      if (selection.roleId) {
+        if (action === 'enable') grantRolePermission(interaction.guildId, selection.roleId, selection.permission, interaction.user.id);
+        else revokeRolePermission(interaction.guildId, selection.roleId, selection.permission, interaction.user.id);
+      } else if (action === 'enable') grantPermission(interaction.guildId, selection.memberId, selection.permission, interaction.user.id);
       else revokePermission(interaction.guildId, selection.memberId, selection.permission, interaction.user.id);
-      return interaction.update(panels.permissionsPayload(interaction, selection.memberId, selection.permission));
+      return interaction.update(panels.permissionsPayload(interaction, selection.memberId, selection.permission, selection.roleId));
     }
   }
   if (area === 'db' && action === 'reset-confirm') {
     if (!manager(interaction, PERMISSIONS.RESET_DATA)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_reset_permission')));
-    return beginDeletionConfirmation(interaction, 'server-reset');
+    return openServerResetModal(interaction);
   }
   if (area === 'user') {
     if (action === 'category') return interaction.update(panels.userPayload(interaction, '', interaction.customId.split(':')[2]));
@@ -406,8 +448,9 @@ async function handleSelect(interaction) {
     const category = { 'date-mode': 'dates', 'date-sep': 'dates', iso: 'dates', 'time-mode': 'times', 'time-sep': 'times', seconds: 'times' }[action] || 'language';
     return interaction.update(panels.userPayload(interaction, t(database.getUser(interaction.user.id).language, 'updated'), category));
   }
-  if (area === 'perm' && action === 'user') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.memberId = interaction.values[0]; selections.set(key, state); return interaction.update(panels.permissionsPayload(interaction, state.memberId, state.permission)); }
-  if (area === 'perm' && action === 'type') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.permission = interaction.values[0]; selections.set(key, state); return interaction.update(panels.permissionsPayload(interaction, state.memberId, state.permission)); }
+  if (area === 'perm' && action === 'user') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.memberId = interaction.values[0]; state.roleId = null; selections.set(key, state); return interaction.update(panels.permissionsPayload(interaction, state.memberId, state.permission)); }
+  if (area === 'perm' && action === 'role') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.roleId = interaction.values[0]; state.memberId = null; selections.set(key, state); return interaction.update(panels.permissionsPayload(interaction, null, state.permission, state.roleId)); }
+  if (area === 'perm' && action === 'type') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.permission = interaction.values[0]; selections.set(key, state); return interaction.update(panels.permissionsPayload(interaction, state.memberId, state.permission, state.roleId)); }
   if (area === 'data' && action === 'user') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.memberId = interaction.values[0]; selections.set(key, state); return showUserData(interaction, state.memberId); }
 }
 
@@ -466,4 +509,4 @@ function showUserData(interaction, userId) {
   });
 }
 
-module.exports = { beginDeletionConfirmation, cancelLanguage, cancelPendingLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, journalFilters, pendingDeletions, pendingLanguages, previewLanguage };
+module.exports = { beginDeletionConfirmation, cancelLanguage, cancelPendingLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage };

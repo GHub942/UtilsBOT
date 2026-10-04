@@ -111,8 +111,8 @@ function addAudit(guildId, action, actorId, details = '') {
 
 function getPermissions(guildId) {
   const database = openDatabase('guild', guildId);
-  const users = database.prepare("SELECT user_id AS subjectId, 'user' AS subjectType, permission, granted_by AS grantedBy, created_at AS createdAt FROM permissions").all();
-  const roles = database.prepare("SELECT role_id AS subjectId, 'role' AS subjectType, permission, granted_by AS grantedBy, created_at AS createdAt FROM role_permissions").all();
+  const users = database.prepare("SELECT user_id AS subjectId, user_id AS userId, NULL AS roleId, 'user' AS subjectType, permission, granted_by AS grantedBy, created_at AS createdAt FROM permissions").all();
+  const roles = database.prepare("SELECT role_id AS subjectId, NULL AS userId, role_id AS roleId, 'role' AS subjectType, permission, granted_by AS grantedBy, created_at AS createdAt FROM role_permissions").all();
   return [...users, ...roles].sort((left, right) => left.permission.localeCompare(right.permission) || left.subjectType.localeCompare(right.subjectType) || left.subjectId.localeCompare(right.subjectId));
 }
 

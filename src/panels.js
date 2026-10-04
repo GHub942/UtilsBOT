@@ -1,4 +1,4 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, RoleSelectMenuBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder } = require('discord.js');
 const database = require('./database');
 const { zoneOptions } = require('./components');
 const { PERMISSIONS, PERMISSION_LABELS, canOpenServerDashboard, hasPermission } = require('./permissions');
@@ -19,6 +19,9 @@ function auditUserSelect(customId, placeholder, selectedUsers) {
   const menu = new UserSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).setMinValues(0).setMaxValues(25);
   if (selectedUsers.length) menu.setDefaultUsers(...selectedUsers);
   return new ActionRowBuilder().addComponents(menu);
+}
+function roleSelect(customId, placeholder) {
+  return new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).setMinValues(1).setMaxValues(1));
 }
 function permissionSelect(customId, selected, language, canAssignPermissionManager) {
   const assignable = Object.entries(PERMISSION_LABELS).filter(([value]) => canAssignPermissionManager || value !== PERMISSIONS.MANAGE_PERMISSIONS);
@@ -60,26 +63,29 @@ function managementPayload(interaction) {
 function healthPayload(interaction) {
   const uptime = Math.floor(process.uptime());
   const language = database.getUser(owner(interaction)).language;
-  const duration = `${Math.floor(uptime / 86400)}d ${Math.floor((uptime % 86400) / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`;
-  const ping = Number.isFinite(interaction.client.ws.ping) ? `${Math.round(interaction.client.ws.ping)} ms` : 'Unavailable';
+  const startedAt = Math.floor(Date.now() / 1000) - uptime;
+  const ping = Number.isFinite(interaction.client.ws.ping) ? `${Math.round(interaction.client.ws.ping)} ms` : t(language, 'health_unavailable');
   const memory = process.memoryUsage();
   const megabytes = value => `${(value / 1024 / 1024).toFixed(1)} MB`;
   const guilds = interaction.client.guilds.cache.size;
   const members = [...interaction.client.guilds.cache.values()].reduce((total, guild) => total + (guild.memberCount || 0), 0);
-  const shards = interaction.client.ws.shards?.size || 0;
+  const shards = interaction.client.ws.shards?.size || interaction.client.ws.shards?.length || 0;
+  const readyAt = interaction.client.readyAt ? Math.floor(interaction.client.readyAt.getTime() / 1000) : null;
+  const statusEmoji = interaction.client.isReady() ? '🟢' : '🟡';
   const fields = [
-    { name: t(language, 'health_status'), value: t(language, interaction.client.isReady() ? 'health_ready' : 'health_connecting'), inline: true },
-    { name: t(language, 'health_uptime'), value: duration, inline: true },
-    { name: t(language, 'health_gateway'), value: ping, inline: true },
-    { name: t(language, 'health_guilds'), value: String(guilds), inline: true },
-    { name: t(language, 'health_members'), value: String(members), inline: true },
-    { name: t(language, 'health_shards'), value: String(shards), inline: true },
-    { name: t(language, 'health_commands'), value: String(interaction.client.commands?.size || 0), inline: true },
-    { name: t(language, 'health_runtime'), value: process.version, inline: true },
-    { name: t(language, 'health_memory'), value: `${t(language, 'health_rss')}: ${megabytes(memory.rss)}\n${t(language, 'health_heap')}: ${megabytes(memory.heapUsed)} / ${megabytes(memory.heapTotal)}`, inline: true },
-    { name: t(language, 'health_audit'), value: String(database.getStats(interaction.guildId).audit), inline: true }
+    { name: `📡 ${t(language, 'health_status')}`, value: `${statusEmoji} ${t(language, interaction.client.isReady() ? 'health_ready' : 'health_connecting')}`, inline: true },
+    { name: `⏱️ ${t(language, 'health_uptime')}`, value: `<t:${startedAt}:R>`, inline: true },
+    { name: `🌐 ${t(language, 'health_gateway')}`, value: `📶 ${ping}`, inline: true },
+    { name: `🏠 ${t(language, 'health_guilds')}`, value: `\`${guilds.toLocaleString()}\``, inline: true },
+    { name: `👥 ${t(language, 'health_members')}`, value: `\`${members.toLocaleString()}\``, inline: true },
+    { name: `🔀 ${t(language, 'health_shards')}`, value: `\`${shards}\``, inline: true },
+    { name: `⌨️ ${t(language, 'health_commands')}`, value: `\`${interaction.client.commands?.size || 0}\``, inline: true },
+    { name: `🟩 ${t(language, 'health_runtime')}`, value: `\`${process.version}\``, inline: true },
+    { name: `🧠 ${t(language, 'health_memory')}`, value: `💾 ${t(language, 'health_rss')}: ${megabytes(memory.rss)}\n📊 ${t(language, 'health_heap')}: ${megabytes(memory.heapUsed)} / ${megabytes(memory.heapTotal)}`, inline: true },
+    { name: `🧾 ${t(language, 'health_audit')}`, value: `\`${database.getStats(interaction.guildId).audit.toLocaleString()}\``, inline: true },
+    { name: `🕒 ${t(language, 'health_connected_since')}`, value: readyAt ? `<t:${readyAt}:R>` : t(language, 'health_unavailable'), inline: true }
   ];
-  return { embeds: [embed(t(language, 'health_title'), t(language, 'health_description')).addFields(...fields)], components: [back(`dashboard:manage:${owner(interaction)}`, language)], flags: MessageFlags.Ephemeral };
+  return { embeds: [embed(t(language, 'health_title'), t(language, 'health_description')).addFields(...fields)], components: [row(button(`manage:health:${owner(interaction)}`, t(language, 'health_refresh'), ButtonStyle.Primary), button(`dashboard:manage:${owner(interaction)}`, t(language, 'back')))], flags: MessageFlags.Ephemeral };
 }
 
 function databasePayload(interaction) {
@@ -132,13 +138,28 @@ function journalPayload(interaction, page = 0, filters = { users: [], actions: [
   };
 }
 
-function permissionsPayload(interaction, selectedUser, selectedPermission) {
+function permissionsPayload(interaction, selectedUser, selectedPermission, selectedRole = null) {
   const id = owner(interaction);
-  const entries = database.getPermissions(interaction.guildId).filter(entry => !selectedUser || entry.userId === selectedUser);
+  const entries = database.getPermissions(interaction.guildId).filter(entry => (
+    (!selectedUser && !selectedRole)
+    || (selectedUser && entry.subjectType === 'user' && entry.subjectId === selectedUser)
+    || (selectedRole && entry.subjectType === 'role' && entry.subjectId === selectedRole)
+  ));
   const language = database.getUser(id).language;
   const labels = new Map(Object.entries(PERMISSION_LABELS).map(([permission, key]) => [permission, t(language, key)]));
-  const summary = entries.length ? entries.map(entry => `<@${entry.userId}> • **${labels.get(entry.permission) || entry.permission}**`).join('\n').slice(0, 1024) : t(language, 'no_permissions_selected');
-  return { embeds: [embed(t(language, 'permissions_title'), t(language, 'permissions_intro')).addFields({ name: t(language, 'current_permissions'), value: summary, inline: false })], components: [userSelect(`perm:user:${id}`, t(language, 'select_member')), permissionSelect(`perm:type:${id}`, selectedPermission, language, interaction.guild?.ownerId === id), row(button(`perm:enable:${id}`, t(language, 'grant_permission'), ButtonStyle.Success).setDisabled(!selectedUser || !selectedPermission), button(`perm:disable:${id}`, t(language, 'revoke_permission'), ButtonStyle.Danger).setDisabled(!selectedUser || !selectedPermission)), back(`manage:database:${id}`, language)], flags: MessageFlags.Ephemeral };
+  const summary = entries.length ? entries.map(entry => `${entry.subjectType === 'role' ? `<@&${entry.subjectId}>` : `<@${entry.subjectId}>`} • **${labels.get(entry.permission) || entry.permission}**`).join('\n').slice(0, 1024) : t(language, 'no_permissions_selected');
+  const hasTarget = Boolean(selectedUser || selectedRole);
+  return {
+    embeds: [embed(t(language, 'permissions_title'), t(language, 'permissions_intro')).addFields({ name: t(language, 'current_permissions'), value: summary, inline: false })],
+    components: [
+      userSelect(`perm:user:${id}`, t(language, 'select_member')),
+      roleSelect(`perm:role:${id}`, t(language, 'select_role')),
+      permissionSelect(`perm:type:${id}`, selectedPermission, language, interaction.guild?.ownerId === id),
+      row(button(`perm:enable:${id}`, t(language, 'grant_permission'), ButtonStyle.Success).setDisabled(!hasTarget || !selectedPermission), button(`perm:disable:${id}`, t(language, 'revoke_permission'), ButtonStyle.Danger).setDisabled(!hasTarget || !selectedPermission)),
+      back(`manage:database:${id}`, language)
+    ],
+    flags: MessageFlags.Ephemeral
+  };
 }
 
 function userDataPayload(interaction) {
@@ -258,12 +279,8 @@ function userPayload(interaction, notice = '', category = 'home') {
   const components = [...(showCategories ? [categoryButtons] : []), ...preferenceRows, footer];
   if (category === 'privacy' || category.startsWith('privacy-')) {
     const plainDetails = details.map(detail => `**${detail.name}**\n${detail.value}`).join('\n\n');
-    return {
-      content: `**${t(settings.language, titleKey)}**\n${description}${plainDetails ? `\n\n${plainDetails}` : ''}`,
-      embeds: [],
-      components,
-      flags: MessageFlags.Ephemeral
-    };
+    const privacyEmbed = embed(t(settings.language, titleKey), `${description}${plainDetails ? `\n\n${plainDetails}` : ''}`);
+    return { embeds: [privacyEmbed], components, flags: MessageFlags.Ephemeral };
   }
   return { embeds: [embed(`⚙️ Utils • ${t(settings.language, titleKey)}`, description).addFields(...details)], components, flags: MessageFlags.Ephemeral };
 }

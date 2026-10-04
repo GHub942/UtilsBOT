@@ -18,13 +18,12 @@ const ZONES = [
 function zoneOptions(selected, language = 'fr') {
   return [
     ['UTC', t(language, 'zone_utc_description')],
-    ['GMT', t(language, 'zone_gmt_description')],
     ...ZONES
   ].map(([value, description]) => ({
-    label: value,
+    label: value === 'UTC' ? t(language, 'zone_utc_gmt') : value,
     value,
     description,
-    default: value === selected
+    default: value === 'UTC' ? ['UTC', 'GMT'].includes(selected) : value === selected
   }));
 }
 

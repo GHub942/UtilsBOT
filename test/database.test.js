@@ -30,7 +30,7 @@ test('drops legacy whitelist data and retains explicit permission records', () =
     assert.equal(database.getStats(guildId).audit, 0);
 
     const migratedDatabase = new DatabaseSync(dbPath);
-    assert.equal(migratedDatabase.prepare('PRAGMA user_version').get().user_version, 1);
+    assert.equal(migratedDatabase.prepare('PRAGMA user_version').get().user_version, 2);
     assert.equal(migratedDatabase.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'whitelist'").get(), undefined);
     migratedDatabase.close();
   } finally {
@@ -109,6 +109,28 @@ test('filters paginated audit results by multiple actors and actions, and export
     const filtered = database.getAuditPage(guildId, 0, 8, {
       users: [actorA, actorB],
       actions: ['timestamp.create', 'convert.create']
+    });
+
+    test('stores role permissions separately and includes them in permission listings', () => {
+      const guildId = `role-permission-${randomUUID()}`;
+      const roleId = `role-${randomUUID()}`;
+
+      try {
+        database.grantRolePermission(guildId, roleId, 'view_stats', 'server-owner');
+        assert.equal(database.hasPermission(guildId, 'member-id', 'view_stats', [roleId]), true);
+        assert.equal(database.hasPermission(guildId, 'member-id', 'view_data', [roleId]), false);
+        assert.deepEqual(database.getPermissions(guildId).map(entry => ({
+          roleId: entry.roleId,
+          subjectType: entry.subjectType,
+          permission: entry.permission
+        })), [{ roleId, subjectType: 'role', permission: 'view_stats' }]);
+
+        database.revokeRolePermission(guildId, roleId, 'view_stats', 'server-owner');
+        assert.equal(database.hasPermission(guildId, 'member-id', 'view_stats', [roleId]), false);
+      } finally {
+        database.closeAll();
+        fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
+      }
     });
     assert.equal(filtered.total, 3);
     assert.deepEqual(filtered.entries.map(entry => entry.action), [
