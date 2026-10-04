@@ -1,0 +1,8 @@
+Project notes (English):
+- Use `/dashboard utils` as the only public entry point for user-facing tools.
+- Keep interaction acknowledgement early; modal handlers acknowledge their own submissions and must not be followed by a generic reply.
+- User time-zone choices are fixed named abbreviations or IANA city zones; do not offer UTC/GMT labels in selection menus.
+- Conversion drafts carry explicit source and destination zones; the destination defaults to the user's saved preference.
+- SQLite is stored under `data/` in guild/user folders and uses WAL. Restore only while holding the bot process lock.
+- Create an English `update_logs/Vx.xx` changelog for every update.
+- Supported runtime is Node.js >=22.5. Run `npm test` before completing code changes.

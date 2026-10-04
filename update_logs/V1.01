@@ -1,0 +1,8 @@
+Version 1.01
+
+- Reorganized personal preferences into themed categories with select-menu controls and added a French/English language preference.
+- Restricted selectable time zones to fixed named abbreviations and IANA city zones.
+- Reworked timestamp and time-zone conversion results; conversion now selects source and destination zones, defaulting the destination to the user's preference.
+- Added daylight-saving gap/fold handling and regression coverage.
+- Added audit-log retention and user-data privacy cleanup, interaction/permission tests, SQLite backup/restore tooling, an operational status panel, CI, and Dependabot configuration.
+- Documented database operations and privacy handling; prepared the remaining English localization work.

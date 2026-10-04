@@ -4,7 +4,7 @@ const timestamp = require('./commands/timestamp');
 const convert = require('./commands/convert');
 const panels = require('./panels');
 const database = require('./database');
-const { resolveZone } = require('./time');
+const { isSelectableZone } = require('./time');
 const { ZONES } = require('./components');
 const { PERMISSIONS, canOpenServerDashboard, grantPermission, hasPermission, revokePermission } = require('./permissions');
 const { acknowledgeCommand, acknowledgeComponent } = require('./interaction-responses');
@@ -25,12 +25,16 @@ async function handleInteraction(client, interaction) {
     return acknowledged.reply(ephemeralError('Commande indisponible. Relance le déploiement des commandes.'));
   }
   if (interaction.isModalSubmit()) {
-    const result = await handleModal(interaction);
-    return result || interaction.reply(ephemeralError('Formulaire expiré ou indisponible.'));
+    if (interaction.customId.startsWith('timestamp:field:')) return timestamp.handleModal(interaction);
+    if (interaction.customId === 'timestamp:zone:modal') return timestamp.handleZoneModal(interaction);
+    if (interaction.customId.startsWith('convert:field:')) return convert.handleModal(interaction);
+    if (interaction.customId.startsWith('convert:zone:modal:')) return convert.handleZoneModal(interaction);
+    if (interaction.customId === 'user:timezone:modal') return handleTimezoneModal(interaction);
+    return interaction.reply(ephemeralError('Formulaire expiré ou indisponible.'));
   }
   const opensModal = interaction.isButton() && /^(timestamp:(date|time)|convert:(date|time|source):)/.test(interaction.customId);
   const selectsCustomZone = interaction.isStringSelectMenu()
-    && (interaction.customId === `timestamp:zone-select:${interaction.user.id}` || interaction.customId === `user:timezone-select:${interaction.user.id}`)
+    && (interaction.customId === `timestamp:zone-select:${interaction.user.id}` || interaction.customId === `user:timezone-select:${interaction.user.id}` || interaction.customId.startsWith(`convert:zone-select:`))
     && interaction.values[0] === 'custom';
   if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu()) && !opensModal && !selectsCustomZone) {
     interaction = await acknowledgeComponent(interaction);
@@ -53,6 +57,7 @@ async function handleButton(interaction) {
   if (area === 'manage') {
     if (action === 'database') return canOpenServerDashboard(interaction) ? interaction.update(panels.databasePayload(interaction)) : interaction.reply(ephemeralError('Aucune permission de gestion serveur.'));
     if (action === 'stats') return manager(interaction, PERMISSIONS.VIEW_STATS) ? showStats(interaction) : interaction.reply(ephemeralError('Permission statistiques requise.'));
+    if (action === 'health') return canOpenServerDashboard(interaction) ? interaction.update(panels.healthPayload(interaction)) : interaction.reply(ephemeralError('Aucune permission de gestion serveur.'));
   }
   if (area === 'db') {
     if (action === 'users') return manager(interaction, PERMISSIONS.VIEW_DATA) ? interaction.update(panels.userDataPayload(interaction)) : interaction.reply(ephemeralError('Permission données requise.'));
@@ -117,7 +122,7 @@ async function handleButton(interaction) {
     return interaction.update({ content: '✅ Base de données serveur réinitialisée.', embeds: [], components: [] });
   }
   if (area === 'user') {
-    if (action === 'page') return interaction.update(panels.userPayload(interaction, '', Number(interaction.customId.split(':')[2])));
+    if (action === 'category') return interaction.update(panels.userPayload(interaction, '', interaction.customId.split(':')[2]));
     if (action === 'delete') return interaction.update(panels.userDangerPayload(interaction));
     if (action === 'delete-confirm') {
       if (interaction.guildId) database.addAudit(interaction.guildId, 'user.delete', interaction.user.id, interaction.user.id);
@@ -129,24 +134,37 @@ async function handleButton(interaction) {
     if (action === 'zone') return interaction.update(panels.timestampZonePayload(interaction, timestamp.getDraft(interaction.user.id).zone));
     if (action === 'date' || action === 'time') return timestamp.openField(interaction, action);
     if (action === 'confirm') return timestamp.confirm(interaction);
+    if (action === 'disambiguation') return timestamp.handleDisambiguation(interaction, Number(interaction.customId.split(':')[2]));
     if (action === 'back') return interaction.update(panels.timestampPayload(interaction, timestamp.getDraft(interaction.user.id)));
     if (action === 'again') return timestamp.again(interaction);
   }
   if (area === 'convert') {
-    if (action === 'date' || action === 'time' || action === 'source') return convert.openField(interaction, action);
+    if (action === 'zone-back') return interaction.update(panels.convertPayload(interaction, convert.getDraft(interaction.user.id)));
+    if (action === 'zone') return interaction.update(panels.convertZonePayload(interaction, interaction.customId.split(':')[2], convert.getDraft(interaction.user.id)));
+    if (action === 'date' || action === 'time') return convert.openField(interaction, action);
     if (action === 'confirm') return convert.confirm(interaction);
     if (action === 'back') return interaction.update(panels.convertPayload(interaction, convert.getDraft(interaction.user.id)));
     if (action === 'again') return convert.again(interaction);
-    if (action === 'arrival') return convert.handleArrival(interaction, interaction.customId.split(':')[2]);
+    if (action === 'disambiguation') return convert.handleDisambiguation(interaction, Number(interaction.customId.split(':')[2]));
   }
 }
 
 async function handleSelect(interaction) {
   const [area, action] = interaction.customId.split(':');
+  if (area === 'convert' && action === 'zone-select') {
+    const role = interaction.customId.split(':')[2];
+    const value = interaction.values[0];
+    if (value === 'custom') return convert.openZoneField(interaction, role);
+    if (!isSelectableZone(value)) return interaction.reply(ephemeralError('Fuseau invalide. Choisis une abréviation fixe ou un nom de ville IANA.'));
+    const draft = convert.getDraft(interaction.user.id);
+    draft[role] = value;
+    convert.drafts.set(interaction.user.id, draft);
+    return interaction.update(panels.convertPayload(interaction, draft));
+  }
   if (area === 'timestamp' && action === 'zone-select') {
     const value = interaction.values[0];
     if (value === 'custom') return timestamp.openZoneField(interaction);
-    if (!ZONES.some(([zone]) => zone === value) || !resolveZone(value)) return interaction.reply(ephemeralError('Fuseau horaire invalide.'));
+    if (!isSelectableZone(value)) return interaction.reply(ephemeralError('Fuseau invalide. Choisis une abréviation fixe ou un nom de ville IANA.'));
     const draft = timestamp.getDraft(interaction.user.id);
     draft.zone = value;
     timestamp.drafts.set(interaction.user.id, draft);
@@ -154,10 +172,10 @@ async function handleSelect(interaction) {
   }
   if (area === 'user' && action === 'timezone-select') {
     const value = interaction.values[0];
-    if (value === 'custom') return interaction.showModal(require('./modals').timezone('UTC'));
-    if (!ZONES.some(([zone]) => zone === value) || !resolveZone(value)) return interaction.reply(ephemeralError('Fuseau horaire invalide.'));
+    if (value === 'custom') return interaction.showModal(require('./modals').timezone('Europe/Paris'));
+    if (!isSelectableZone(value)) return interaction.reply(ephemeralError('Fuseau invalide. Choisis une abréviation fixe ou un nom de ville IANA.'));
     updateSettings(interaction.user.id, { timezone: value });
-    return interaction.update(panels.userPayload(interaction, `🌍 Fuseau mis à jour : **${value}**.`));
+    return interaction.update(panels.userPayload(interaction, `🌍 Fuseau mis à jour : **${value}**.`, 'region'));
   }
   if (area === 'user') {
     const preferences = {
@@ -166,30 +184,27 @@ async function handleSelect(interaction) {
       'date-sep': { key: 'dateSeparator', values: ['/', '.', '-', ','] },
       'time-sep': { key: 'timeSeparator', values: [':', '.', '-', ',', 'h'] },
       seconds: { key: 'showSeconds', values: ['true', 'false'], parse: value => value === 'true' },
-      iso: { key: 'isoDates', values: ['true', 'false'], parse: value => value === 'true' }
+      iso: { key: 'isoDates', values: ['true', 'false'], parse: value => value === 'true' },
+      language: { key: 'language', values: ['fr', 'en'] }
     };
     const preference = Object.hasOwn(preferences, action) ? preferences[action] : null;
     if (!preference || !preference.values.includes(interaction.values[0])) return interaction.reply(ephemeralError('Option de préférence invalide.'));
     const value = preference.parse ? preference.parse(interaction.values[0]) : interaction.values[0];
     updateSettings(interaction.user.id, { [preference.key]: preference.array ? [value] : value });
-    return interaction.update(panels.userPayload(interaction, '✅ Préférence mise à jour.', action === 'time-sep' || action === 'seconds' || action === 'iso' ? 2 : 1));
+    const category = { 'date-mode': 'dates', 'date-sep': 'dates', iso: 'dates', 'time-mode': 'times', 'time-sep': 'times', seconds: 'times', language: 'language' }[action] || 'home';
+    return interaction.update(panels.userPayload(interaction, '✅ Préférence mise à jour.', category));
   }
   if (area === 'perm' && action === 'user') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.memberId = interaction.values[0]; selections.set(key, state); return interaction.update(panels.permissionsPayload(interaction, state.memberId, state.permission)); }
   if (area === 'perm' && action === 'type') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.permission = interaction.values[0]; selections.set(key, state); return interaction.update(panels.permissionsPayload(interaction, state.memberId, state.permission)); }
   if (area === 'data' && action === 'user') { const key = selectionKey(interaction); const state = selections.get(key) || {}; state.memberId = interaction.values[0]; selections.set(key, state); return showUserData(interaction, state.memberId); }
 }
 
-async function handleModal(interaction) {
-  if (interaction.customId.startsWith('timestamp:field:')) return timestamp.handleModal(interaction);
-  if (interaction.customId === 'timestamp:zone:modal') return timestamp.handleZoneModal(interaction);
-  if (interaction.customId.startsWith('convert:field:')) return convert.handleModal(interaction);
-  if (interaction.customId === 'user:timezone:modal') {
-    const value = interaction.fields.getTextInputValue('timezone').trim();
-    if (!resolveZone(value)) return interaction.reply(ephemeralError('Fuseau inconnu. Utilise un nom IANA valide, comme `Europe/Paris` ou `America/New_York`, ou un décalage `UTC+01:00`.'));
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    updateSettings(interaction.user.id, { timezone: value });
-    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('🌍 Fuseau enregistré').setDescription(`Ton fuseau par défaut est maintenant **${value}**.`)] });
-  }
+async function handleTimezoneModal(interaction) {
+  const value = interaction.fields.getTextInputValue('timezone').trim();
+  if (!isSelectableZone(value)) return interaction.reply(ephemeralError('Fuseau invalide. Utilise une abréviation fixe reconnue ou un nom de ville IANA, comme `Europe/Paris`.'));
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  updateSettings(interaction.user.id, { timezone: value });
+  return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('🌍 Fuseau enregistré').setDescription(`Ton fuseau par défaut est maintenant **${value}**.`)] });
 }
 
 function userSelect(customId, placeholder) { return new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).setMinValues(1).setMaxValues(1)); }

@@ -4,23 +4,24 @@ This is the follow-up backlog; it is not a guarantee that an item is scheduled.
 
 ## T1 : Security and privacy
 
-- Define a retention limit and cleanup policy for the audit log, which currently grows until an administrator resets or removes the database.
-- Document a privacy request process for audit entries associated with deleted accounts.
-- Review exported data and debug logging whenever new fields or event details are added.
+- [x] Define a 180-day retention limit and 10,000-entry cap for the audit log, cleaned on audit writes.
+- [x] Document the privacy request process and remove matching audit and permission records when Utils user data is deleted.
+- [x] Review export contents and ensure interaction debug logs avoid user-provided values.
 
 ## T2 : Reliability and operations
 
-- Add automated integration coverage for Discord interaction flows and permission-denied cases.
-- Add a documented, tested SQLite backup and restore procedure that handles WAL files safely.
-- Consider a health/status command and operational metrics for unattended deployments.
-- Add CI checks for the supported Node.js versions and dependency updates.
+- [x] Add automated coverage for modal interaction acknowledgement and permission-denied flows.
+- [x] Add a documented, tested SQLite online-backup and restore procedure that handles WAL files safely.
+- [x] Add a dashboard health/status view with uptime, gateway latency, and audit-log size.
+- [x] Add CI checks for supported Node.js versions and automated dependency update proposals.
 
 ## T3 : Time tools
 
-- Expand tests for ambiguous and nonexistent local times at daylight-saving transitions.
-- Review the curated time-zone menu based on user feedback while retaining the custom IANA-zone entry.
-- Add locale-aware preference options if additional languages are introduced.
+- [x] Test ambiguous and nonexistent local times at daylight-saving transitions.
+- [x] Curate selectable zones as fixed named abbreviations and city-based IANA zones, retaining custom IANA input.
+- [x] Add a French/English preference control as the basis for localized settings and tools.
 
 ## T4 : Languages
-- Translate all the backend actually in French to English
-- Add a translation for the BOT : English. The translation is choosed by the user in /dashboard utils
+- [ ] Translate all remaining French backend messages and administrative panels to English.
+- [x] Add English translations for preference categories and the time tools, selectable from `/dashboard utils`.
+- [ ] Complete and audit the English translation of every user-facing bot message.

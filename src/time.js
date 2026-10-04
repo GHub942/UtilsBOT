@@ -18,12 +18,26 @@ const FIXED_ALIASES = new Map([
   ['CET', 60],
   ['CEST', 120],
   ['EET', 120],
+  ['EEST', 180],
   ['EST', -300],
   ['EDT', -240],
+  ['CST', -360],
+  ['CDT', -300],
+  ['MST', -420],
+  ['MDT', -360],
   ['PST', -480],
   ['PDT', -420],
-  ['BST', 60]
+  ['BST', 60],
+  ['IST', 330],
+  ['JST', 540],
+  ['KST', 540],
+  ['AEST', 600],
+  ['AEDT', 660],
+  ['NZST', 720],
+  ['NZDT', 780]
 ]);
+
+const SELECTABLE_FIXED_ZONES = new Set(['CET', 'CEST', 'EST', 'EDT', 'PST', 'PDT']);
 
 function normalizeZoneName(input) {
   return String(input || '').trim().toUpperCase();
@@ -49,6 +63,13 @@ function resolveZone(input) {
   return { zone: name, label: name, canonical: name };
 }
 
+function isSelectableZone(input) {
+  const name = String(input || '').trim();
+  if (SELECTABLE_FIXED_ZONES.has(name.toUpperCase())) return true;
+  if (/^(UTC|GMT|ETC\/|SYSTEMV\/)/i.test(name)) return false;
+  return IANAZone.isValidZone(name);
+}
+
 function formatOffset(minutes) {
   const sign = minutes < 0 ? '-' : '+';
   const absolute = Math.abs(minutes);
@@ -58,6 +79,7 @@ function formatOffset(minutes) {
 }
 
 function dateInputExample(preferences = {}) {
+  if (preferences.isoDates) return '2026-09-03';
   const format = preferences.dateFormats?.[0] || 'DMY';
   const separator = preferences.dateSeparator || '/';
   const parts = format === 'YMD' ? ['2026', '09', '03'] : format === 'MDY' ? ['09', '03', '2026'] : ['03', '09', '2026'];
@@ -93,6 +115,28 @@ function parseDateTime(input, zoneInput, preferences = {}) {
       const day = Number(format === 'MDY' ? dateMatch[2] : format === 'YMD' ? dateMatch[3] : dateMatch[1]);
       const candidate = DateTime.fromObject({ year, month, day, hour: Number(timeMatch[1]), minute: Number(timeMatch[2]), second: Number(timeMatch[3] || 0) }, { zone: zoneInfo.zone });
       if (candidate.isValid) {
+        const expected = {
+          year,
+          month,
+          day,
+          hour: Number(timeMatch[1]),
+          minute: Number(timeMatch[2]),
+          second: Number(timeMatch[3] || 0)
+        };
+        if (Object.entries(expected).some(([part, value]) => candidate[part] !== value)) {
+          return { error: 'Cette heure locale n’existe pas à cause du passage à l’heure d’été. Choisis une heure valide dans ce fuseau.' };
+        }
+        const possibleOffsets = candidate.getPossibleOffsets();
+        if (possibleOffsets.length > 1) {
+          if (preferences.disambiguation === undefined) {
+            return { ambiguous: possibleOffsets, zoneInfo };
+          }
+          if (!Number.isInteger(preferences.disambiguation) || !possibleOffsets[preferences.disambiguation]) {
+            return { error: 'Invalid daylight-saving time selection.' };
+          }
+          dateTime = possibleOffsets[preferences.disambiguation];
+          break;
+        }
         dateTime = candidate;
         break;
       }
@@ -102,16 +146,28 @@ function parseDateTime(input, zoneInput, preferences = {}) {
   return { dateTime, zoneInfo };
 }
 
-function formatLocal(dateTime) {
-  return dateTime.toFormat("dd/MM/yyyy HH:mm 'UTC'ZZ");
+function formatLocal(dateTime, preferences = {}) {
+  const dateFormat = preferences.dateFormats?.[0] || 'DMY';
+  const separator = preferences.dateSeparator || '/';
+  const date = preferences.isoDates
+    ? dateTime.toFormat('yyyy-MM-dd')
+    : (dateFormat === 'YMD'
+      ? [dateTime.toFormat('yyyy'), dateTime.toFormat('MM'), dateTime.toFormat('dd')]
+      : dateFormat === 'MDY'
+        ? [dateTime.toFormat('MM'), dateTime.toFormat('dd'), dateTime.toFormat('yyyy')]
+        : [dateTime.toFormat('dd'), dateTime.toFormat('MM'), dateTime.toFormat('yyyy')]).join(separator);
+  const timeFormat = preferences.timeFormats?.[0] || 'HMS';
+  const showSeconds = preferences.showSeconds !== false && timeFormat !== 'HM';
+  const time = timeFormat === 'TEXT'
+    ? `${dateTime.toFormat('HH')}h ${dateTime.toFormat('mm')}m${showSeconds ? ` ${dateTime.toFormat('ss')}s` : ''}`
+    : [dateTime.toFormat('HH'), dateTime.toFormat('mm'), ...(showSeconds ? [dateTime.toFormat('ss')] : [])].join(preferences.timeSeparator || ':');
+  return `${preferences.isoDates ? `${date}T${time}` : `${date} ${time}`}`;
 }
 
 function getEquivalentZones(dateTime, zoneInfo) {
   const offset = dateTime.offset;
   const names = new Set();
-  names.add(`UTC${formatOffset(offset)}`);
-  names.add(`GMT${formatOffset(offset)}`);
-  for (const alias of FIXED_ALIASES.keys()) {
+  for (const alias of SELECTABLE_FIXED_ZONES) {
     const aliasInfo = resolveZone(alias);
     if (DateTime.fromMillis(dateTime.toMillis(), { zone: aliasInfo.zone }).offset === offset) names.add(alias);
   }
@@ -148,8 +204,7 @@ function discordTimestampFormats(seconds) {
 function arrivalModesForDate(dateTime) {
   const paris = dateTime.setZone('Europe/Paris');
   const offsets = [-1, 0, 1].map(days => paris.plus({ days }).offset);
-  const modes = new Set(offsets.map(offset => offset === 120 ? 'GMT' : 'UTC'));
-  return [...modes];
+  return [...new Set(offsets)];
 }
 
-module.exports = { arrivalModesForDate, dateInputExample, discordTimestampFormats, formatLocal, formatOffset, getEquivalentZones, parseDateTime, representativeCountries, resolveZone, timeInputExample };
+module.exports = { arrivalModesForDate, dateInputExample, discordTimestampFormats, formatLocal, formatOffset, getEquivalentZones, isSelectableZone, parseDateTime, representativeCountries, resolveZone, timeInputExample };

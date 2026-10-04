@@ -35,8 +35,11 @@ Environment variables:
 - Timestamp creation displays a Discord preview, Unix timestamp, and copy-ready Discord formats.
 - Time-zone conversion handles IANA time zones, fixed UTC offsets, seasonal offsets, and daylight-saving transitions.
 - Preference controls use select menus. Date/time formats, separators, seconds, ISO 8601, and the default time zone are stored per user.
+- Time-zone choices include fixed named abbreviations and curated IANA city zones; bare UTC/GMT labels and offsets are not offered in preference menus.
+- Time conversion asks for both source and destination zones. The destination initially follows the user's saved time-zone preference.
 - Server management is permission-based. The guild owner and members with Discord's `Manage Server` permission have administrative access; other access is granted explicitly with Utils permissions.
 - Data exports and the audit journal are available only to members with the corresponding Utils permission.
+- The server dashboard includes a basic operational status view with process uptime, gateway latency, and audit-log size.
 
 The removed `/timezone` and `/timestamp` application commands are not registered. Use the corresponding tools under `/dashboard utils`.
 
@@ -51,6 +54,22 @@ The guild owner has all Utils permissions. Members with `Manage Server` can view
 The bot stores guild data in `data/guilds/<guild-id>/data.sqlite` and personal preferences in `data/users/<user-id>/data.sqlite`. Guild databases include explicit permissions, server settings, and an audit log. User databases contain preferences. SQLite uses write-ahead logging.
 
 User-data deletion removes that user's preferences. Server administrators can export or delete user data only when assigned the corresponding permission. Keep `.env` and the `data/` directory private, restrict access to backups, and never commit tokens or database files.
+
+## Database backups
+
+Run backups to a new directory outside `data/`; the SQLite online backup API creates a consistent snapshot of each database, including databases currently using WAL:
+
+```sh
+npm run database -- backup ../utilsbot-backup-2026-10-04
+```
+
+Restore overlays databases from an existing backup and requires the bot to be stopped. The script takes the bot process lock and refuses to restore while another bot instance is running:
+
+```sh
+npm run database -- restore ../utilsbot-backup-2026-10-04
+```
+
+Restore does not delete live databases absent from the backup. Keep backups access-controlled, test restores periodically, and store copies separately from the bot host.
 
 ## Development and tests
 

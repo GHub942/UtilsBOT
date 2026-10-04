@@ -38,3 +38,27 @@ test('drops legacy whitelist data and retains explicit permission records', () =
     fs.rmSync(guildDirectory, { recursive: true, force: true });
   }
 });
+
+test('deletes a user preferences, permissions, and identifying guild audit entries', () => {
+  const guildId = `privacy-test-${randomUUID()}`;
+  const userId = `privacy-user-${randomUUID()}`;
+  const guildDirectory = path.join(__dirname, '..', 'data', 'guilds', guildId);
+  const userDirectory = path.join(__dirname, '..', 'data', 'users', userId);
+
+  try {
+    database.setUserPreferences(userId, { timezone: 'Europe/Paris' });
+    database.grantPermission(guildId, userId, 'view_stats', 'admin');
+    database.addAudit(guildId, 'user.action', userId, 'subject=' + userId);
+    assert.equal(database.getStats(guildId).audit, 2);
+
+    database.deleteUserData(userId);
+
+    assert.equal(database.hasPermission(guildId, userId, 'view_stats'), false);
+    assert.equal(database.getStats(guildId).audit, 0);
+    assert.equal(fs.existsSync(userDirectory), false);
+  } finally {
+    database.closeAll();
+    fs.rmSync(guildDirectory, { recursive: true, force: true });
+    fs.rmSync(userDirectory, { recursive: true, force: true });
+  }
+});

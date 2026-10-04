@@ -23,3 +23,11 @@ Include the affected version, impact, reproduction steps, and any suggested miti
 ## Data handling
 
 Guild permissions, settings, and audit records are stored locally in per-guild SQLite files. Personal preferences are stored in per-user SQLite files. The bot does not require message-content access. A user's preferences can be deleted through the dashboard; authorized server administrators can export or delete user data where the relevant Utils permission is granted.
+
+Audit records are retained for at most 180 days and capped at 10,000 entries per guild. Cleanup occurs when a new audit record is written. Deleting a user's Utils data also removes their explicit permission assignments and guild audit records that identify them as an actor or in record details.
+
+For a privacy request, the user can delete their own Utils data from `/dashboard utils` under Preferences > Language & privacy. A server administrator with user-data management permission can also delete a selected user's Utils data. Requests concerning Discord account data held by Discord itself must be submitted to Discord; this bot only controls its own local database.
+
+Use `npm run database -- backup <new-directory>` to create a SQLite-consistent snapshot outside `data/`. Stop the bot before `npm run database -- restore <backup-directory>`; restore acquires the single-instance lock and overlays databases without deleting files absent from the backup. See the README for operational details.
+
+Exports may contain user and guild identifiers. Debug logs record interaction types, not user-provided values or message contents; still review logs and exports before sharing them.

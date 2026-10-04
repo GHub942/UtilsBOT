@@ -1,10 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
+const { isSelectableZone } = require('./time');
 
 const DATA_ROOT = path.join(__dirname, '..', 'data');
+const AUDIT_RETENTION_DAYS = 180;
+const AUDIT_MAX_ENTRIES = 10000;
 const guildDatabases = new Map();
 const userDatabases = new Map();
+
+function validateIdentifier(id) {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(id))) throw new Error('Database identifier contains invalid characters.');
+}
 
 function closeAll() {
   for (const database of [...guildDatabases.values(), ...userDatabases.values()]) database.close();
@@ -13,6 +20,7 @@ function closeAll() {
 }
 
 function openDatabase(scope, id) {
+  validateIdentifier(id);
   const cache = scope === 'guild' ? guildDatabases : userDatabases;
   if (cache.has(id)) return cache.get(id);
   const directory = path.join(DATA_ROOT, scope === 'guild' ? 'guilds' : 'users', id);
@@ -25,6 +33,7 @@ function openDatabase(scope, id) {
       const schemaVersion = database.prepare('PRAGMA user_version').get().user_version;
       database.exec('CREATE TABLE IF NOT EXISTS permissions (user_id TEXT NOT NULL, permission TEXT NOT NULL, granted_by TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, permission)); CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, actor_id TEXT NOT NULL, details TEXT NOT NULL DEFAULT \'\', created_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
       if (schemaVersion < 1) database.exec('DROP TABLE IF EXISTS whitelist; PRAGMA user_version = 1;');
+      database.prepare('DELETE FROM audit_log WHERE created_at < ? OR id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)').run(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000, AUDIT_MAX_ENTRIES);
     } else {
       database.exec('CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
     }
@@ -49,7 +58,16 @@ function getGuild(guildId) {
 function getUser(userId) {
   const database = openDatabase('user', userId);
   const values = Object.fromEntries(database.prepare('SELECT key, value FROM preferences').all().map(row => [row.key, JSON.parse(row.value)]));
-  return { timezone: values.timezone || 'UTC', isoDates: values.isoDates ?? false, dateFormats: values.dateFormats || ['DMY'], timeFormats: values.timeFormats || ['HMS'], dateSeparator: values.dateSeparator || '/', timeSeparator: values.timeSeparator || ':', showSeconds: values.showSeconds ?? true };
+  return {
+    timezone: isSelectableZone(values.timezone) ? values.timezone : 'Europe/Paris',
+    language: values.language === 'en' ? 'en' : 'fr',
+    isoDates: values.isoDates ?? false,
+    dateFormats: values.dateFormats || ['DMY'],
+    timeFormats: values.timeFormats || ['HMS'],
+    dateSeparator: values.dateSeparator || '/',
+    timeSeparator: values.timeSeparator || ':',
+    showSeconds: values.showSeconds ?? true
+  };
 }
 
 function setUserPreferences(userId, preferences) {
@@ -60,7 +78,16 @@ function setUserPreferences(userId, preferences) {
 }
 
 function addAudit(guildId, action, actorId, details = '') {
-  openDatabase('guild', guildId).prepare('INSERT INTO audit_log (action, actor_id, details, created_at) VALUES (?, ?, ?, ?)').run(action, actorId, details, Date.now());
+  const database = openDatabase('guild', guildId);
+  database.exec('BEGIN IMMEDIATE;');
+  try {
+    database.prepare('INSERT INTO audit_log (action, actor_id, details, created_at) VALUES (?, ?, ?, ?)').run(action, actorId, details, Date.now());
+    database.prepare('DELETE FROM audit_log WHERE created_at < ? OR id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)').run(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000, AUDIT_MAX_ENTRIES);
+    database.exec('COMMIT;');
+  } catch (error) {
+    if (database.isTransaction) database.exec('ROLLBACK;');
+    throw error;
+  }
 }
 
 function getPermissions(guildId) {
@@ -82,12 +109,23 @@ function revokePermission(guildId, userId, permission, actorId) {
 }
 
 function deleteUserData(userId) {
+  validateIdentifier(userId);
   if (userDatabases.has(userId)) {
     userDatabases.get(userId).close();
     userDatabases.delete(userId);
   }
   const directory = path.join(DATA_ROOT, 'users', userId);
   fs.rmSync(directory, { recursive: true, force: true });
+  const guildDirectory = path.join(DATA_ROOT, 'guilds');
+  if (fs.existsSync(guildDirectory)) {
+    for (const guildId of fs.readdirSync(guildDirectory)) {
+      const guildPath = path.join(guildDirectory, guildId);
+      if (!fs.statSync(guildPath).isDirectory()) continue;
+      const database = openDatabase('guild', guildId);
+      database.prepare('DELETE FROM permissions WHERE user_id = ?').run(userId);
+      database.prepare('DELETE FROM audit_log WHERE actor_id = ? OR instr(details, ?) > 0').run(userId, userId);
+    }
+  }
 }
 
 function getStats(guildId) {
@@ -105,15 +143,17 @@ function getAuditPage(guildId, page = 0, pageSize = 8) {
 }
 
 function exportAudit(guildId) {
-  return { guildId, exportedAt: new Date().toISOString(), entries: getAuditPage(guildId, 0, 100000).entries };
+  return { guildId, exportedAt: new Date().toISOString(), entries: getAuditPage(guildId, 0, AUDIT_MAX_ENTRIES).entries };
 }
 
 function getUserData(guildId, userId) {
-  const guild = getGuild(guildId);
+  const audit = openDatabase('guild', guildId)
+    .prepare('SELECT action, actor_id AS actorId, details, created_at AS timestamp FROM audit_log WHERE actor_id = ? OR instr(details, ?) > 0 ORDER BY id DESC LIMIT 25')
+    .all(userId, userId);
   return {
     userId,
     preferences: getUser(userId),
-    audit: guild.audit.filter(entry => entry.details.includes(userId)).slice(0, 25)
+    audit
   };
 }
 
@@ -145,5 +185,7 @@ module.exports = {
   revokePermission,
   resetGuild,
   setUserPreferences,
-  updateUser: setUserPreferences
+  updateUser: setUserPreferences,
+  AUDIT_MAX_ENTRIES,
+  AUDIT_RETENTION_DAYS
 };
