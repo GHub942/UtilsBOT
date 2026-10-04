@@ -7,6 +7,7 @@ const PERMISSIONS = Object.freeze({
   MANAGE_USER_DATA: 'manage_user_data',
   RESET_DATA: 'reset_data',
   MANAGE_PERMISSIONS: 'manage_permissions',
+  MANAGE_PRESENCE: 'manage_presence',
   VIEW_PRESENCE: 'view_presence'
 });
 
@@ -17,6 +18,7 @@ const PERMISSION_LABELS = Object.freeze({
   manage_user_data: 'permission_manage_user_data',
   reset_data: 'permission_reset_data',
   manage_permissions: 'permission_manage_permissions',
+  manage_presence: 'permission_manage_presence',
   view_presence: 'permission_view_presence'
 });
 

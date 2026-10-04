@@ -2,11 +2,17 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags
 const database = require('./database');
 const { t } = require('./i18n');
 const { PERMISSIONS, hasPermission, isGuildOwner } = require('./permissions');
+const logger = require('./logger');
 
 const SETTING_KEY = 'presence_monitor';
 const REFRESH_INTERVAL_MS = 5 * 60_000;
+const REFRESH_USER_COOLDOWN_MS = 15_000;
+const REFRESH_GLOBAL_COOLDOWN_MS = 5_000;
 const VALID_ACCESS_MODES = new Set(['permission', 'owner', 'nobody', 'everyone']);
 let presenceAvailable = false;
+const guildRefreshes = new Map();
+const userRefreshes = new Map();
+const refreshEnableTimers = new Map();
 
 function isAvailable() {
   return presenceAvailable;
@@ -31,10 +37,16 @@ function statusDetails(guild, userId, configuration, now) {
   const presence = guild.presences.cache.get(userId);
   const member = guild.members?.cache?.get(userId);
   const user = member?.user || presence?.user || guild.client?.users?.cache?.get(userId);
-  const status = ['online', 'idle', 'dnd'].includes(presence?.status) ? presence.status : 'offline';
+  const status = ['online', 'idle', 'dnd', 'offline'].includes(presence?.status)
+    ? presence.status
+    : presence || member
+      ? 'offline'
+      : 'unknown';
   const onlineSince = { ...(configuration.onlineSince || {}) };
   if (status === 'offline') delete onlineSince[userId];
-  else if (!Number.isInteger(onlineSince[userId])) onlineSince[userId] = Math.floor(now / 1000);
+  else if (['online', 'idle', 'dnd'].includes(status) && !Number.isInteger(onlineSince[userId])) {
+    onlineSince[userId] = Math.floor(now / 1000);
+  }
 
   const activity = presence?.activities
     ?.map(item => item.state || item.name)
@@ -56,36 +68,112 @@ function makePayload(guild, configuration, now = Date.now()) {
   const fields = ids.map(userId => {
     const state = statusDetails(guild, userId, configuration, now);
     states.set(userId, state);
-    const emoji = { online: '🟢', idle: '🌙', dnd: '⛔', offline: '⚫' }[state.status];
+    const emoji = { online: '🟢', idle: '🟡', dnd: '🔴', offline: '⚫', unknown: '❔' }[state.status];
     const statusText = t(language, `presence_status_${state.status}`);
-    const activity = state.activity || t(language, 'presence_no_activity');
-    const onlineDuration = state.status === 'offline'
-      ? t(language, 'presence_not_online')
+    const activity = state.status === 'unknown'
+      ? t(language, 'presence_activity_unavailable')
+      : state.activity || t(language, 'presence_no_activity');
+    const onlineDuration = state.status === 'offline' || state.status === 'unknown'
+      ? t(language, `presence_status_${state.status}`)
       : `${t(language, 'presence_first_seen_online')} <t:${state.onlineSince[userId]}:R>`;
     return {
-      name: state.displayName || t(language, 'presence_unknown_member'),
-      value: `${emoji} **${statusText}**\n${t(language, 'presence_activity')}: ${activity}\n${onlineDuration}`,
+      name: `${emoji} ${state.displayName || t(language, 'presence_unknown_member')}`,
+      value: `<@${userId}> \`${userId}\`\n**${statusText}**\n${t(language, 'presence_activity')}: ${activity}\n${onlineDuration}`,
       inline: false
     };
   });
   const updatedAt = Math.floor(now / 1000);
+  const nextUpdate = Math.ceil((Math.floor(now / REFRESH_INTERVAL_MS) + 1) * REFRESH_INTERVAL_MS / 1000);
+  const guildCooldownRemaining = Math.max(0, REFRESH_GLOBAL_COOLDOWN_MS - (now - (guildRefreshes.get(guild.id) ?? -Infinity)));
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle(t(language, 'presence_title'))
-    .setDescription(`${t(language, 'presence_description')}\n${t(language, 'presence_updated')} <t:${updatedAt}:R>.`)
+    .setTitle(`${t(language, 'presence_title')} • ${guild.name}`)
+    .setDescription(`${t(language, 'presence_description')}\n${t(language, 'presence_updated')} <t:${updatedAt}:R>\n${t(language, 'presence_next_update')} <t:${nextUpdate}:R>`)
     .addFields(...fields);
   const refresh = new ButtonBuilder()
     .setCustomId(`presence:refresh:${guild.id}`)
-    .setLabel(t(language, 'presence_refresh'))
+    .setLabel(guildCooldownRemaining
+      ? `${t(language, 'presence_refresh_wait')} ${Math.ceil(guildCooldownRemaining / 1000)}s`
+      : t(language, 'presence_refresh'))
     .setStyle(ButtonStyle.Primary)
-    .setDisabled(configuration.accessMode === 'nobody');
+    .setDisabled(configuration.accessMode === 'nobody' || guildCooldownRemaining > 0);
   return {
     payload: { embeds: [embed], components: [new ActionRowBuilder().addComponents(refresh)], allowedMentions: { parse: [] } },
     onlineSince: Object.fromEntries(ids.flatMap(userId => {
       const state = states.get(userId);
-      return state.status === 'offline' ? [] : [[userId, state.onlineSince[userId]]];
+      return ['online', 'idle', 'dnd'].includes(state.status) ? [[userId, state.onlineSince[userId]]] : [];
     }))
   };
+}
+
+function takeRefreshCooldown(guildId, userId, now = Date.now()) {
+  const userKey = `${guildId}:${userId}`;
+  const userLastRefresh = userRefreshes.get(userKey);
+  const userRemaining = userLastRefresh === undefined
+    ? 0
+    : Math.max(0, REFRESH_USER_COOLDOWN_MS - (now - userLastRefresh));
+  const guildLastRefresh = guildRefreshes.get(guildId);
+  const guildRemaining = guildLastRefresh === undefined
+    ? 0
+    : Math.max(0, REFRESH_GLOBAL_COOLDOWN_MS - (now - guildLastRefresh));
+  if (userRemaining || guildRemaining) {
+    return {
+      scope: userRemaining >= guildRemaining ? 'user' : 'guild',
+      remainingMs: Math.max(userRemaining, guildRemaining)
+    };
+  }
+  userRefreshes.set(userKey, now);
+  guildRefreshes.set(guildId, now);
+  if (userRefreshes.size > 5_000) {
+    for (const [id, refreshedAt] of userRefreshes) {
+      if (now - refreshedAt >= REFRESH_USER_COOLDOWN_MS) userRefreshes.delete(id);
+    }
+  }
+  if (guildRefreshes.size > 5_000) {
+    for (const [id, refreshedAt] of guildRefreshes) {
+      if (now - refreshedAt >= REFRESH_GLOBAL_COOLDOWN_MS) guildRefreshes.delete(id);
+    }
+  }
+  return null;
+}
+
+function scheduleRefreshButtonEnable(interaction, expiresAt) {
+  const guildId = interaction.guildId;
+  const previousTimer = refreshEnableTimers.get(guildId);
+  if (previousTimer) clearTimeout(previousTimer);
+
+  const timer = setTimeout(async () => {
+    refreshEnableTimers.delete(guildId);
+    const lastRefresh = guildRefreshes.get(guildId);
+    if (lastRefresh !== undefined && Date.now() < lastRefresh + REFRESH_GLOBAL_COOLDOWN_MS) {
+      scheduleRefreshButtonEnable(interaction, lastRefresh + REFRESH_GLOBAL_COOLDOWN_MS);
+      return;
+    }
+    try {
+      const configuration = getConfiguration(guildId);
+      if (!configuration.channelId || !configuration.messageId) return;
+      const language = configuration.language === 'en' ? 'en' : 'fr';
+      const refresh = new ButtonBuilder()
+        .setCustomId(`presence:refresh:${guildId}`)
+        .setLabel(t(language, 'presence_refresh'))
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(configuration.accessMode === 'nobody');
+      const guild = interaction.client?.guilds.cache.get(guildId);
+      const channel = guild?.channels.cache.get(configuration.channelId)
+        || await guild?.channels.fetch(configuration.channelId);
+      const message = interaction.message?.id === configuration.messageId
+        ? interaction.message
+        : await channel?.messages?.fetch(configuration.messageId);
+      if (!message) return;
+      await message.edit({
+        components: [new ActionRowBuilder().addComponents(refresh)]
+      });
+    } catch (error) {
+      logger.warn(`Could not re-enable the presence refresh button for guild ${guildId}.`, error.stack || error.message);
+    }
+  }, Math.max(0, expiresAt - Date.now()));
+  timer.unref();
+  refreshEnableTimers.set(guildId, timer);
 }
 
 function persistOnlineSince(guild, configuration, now = Date.now()) {
@@ -202,7 +290,7 @@ function canRefresh(interaction, configuration = getConfiguration(interaction.gu
   return false;
 }
 
-async function refreshInteraction(interaction) {
+async function refreshInteraction(interaction, now = Date.now()) {
   const configuration = getConfiguration(interaction.guildId);
   if (!canRefresh(interaction, configuration)) {
     const language = database.getUser(interaction.user.id).language;
@@ -211,11 +299,23 @@ async function refreshInteraction(interaction) {
       flags: MessageFlags.Ephemeral
     });
   }
-  const result = makePayload(interaction.guild, configuration);
+  const cooldown = takeRefreshCooldown(interaction.guildId, interaction.user.id, now);
+  if (cooldown) {
+    const language = configuration.language === 'en' ? 'en' : 'fr';
+    const retryAt = Math.ceil((now + cooldown.remainingMs) / 1000);
+    return interaction.reply({
+      embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle(t(language, 'presence_refresh_cooldown'))
+        .setDescription(`${t(language, cooldown.scope === 'user' ? 'presence_refresh_user_wait' : 'presence_refresh_guild_wait')} <t:${retryAt}:R>.`)],
+      flags: MessageFlags.Ephemeral
+    });
+  }
+  const result = makePayload(interaction.guild, configuration, now);
   configuration.messageId = interaction.message?.id || configuration.messageId;
   configuration.onlineSince = result.onlineSince;
   database.setGuildSetting(interaction.guildId, SETTING_KEY, configuration);
-  return interaction.update(result.payload);
+  const response = await interaction.update(result.payload);
+  scheduleRefreshButtonEnable(interaction, now + REFRESH_GLOBAL_COOLDOWN_MS);
+  return response;
 }
 
 function start(client, logger) {
@@ -263,7 +363,9 @@ async function pause(client, logger) {
 }
 
 module.exports = {
+  REFRESH_GLOBAL_COOLDOWN_MS,
   REFRESH_INTERVAL_MS,
+  REFRESH_USER_COOLDOWN_MS,
   SETTING_KEY,
   VALID_ACCESS_MODES,
   canRefresh,
@@ -277,5 +379,7 @@ module.exports = {
   refreshInteraction,
   start,
   setAvailable,
+  scheduleRefreshButtonEnable,
+  takeRefreshCooldown,
   updatePublishedMessage
 };

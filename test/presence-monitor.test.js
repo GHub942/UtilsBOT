@@ -20,11 +20,13 @@ test('builds one embed for at most five members with status, activity, and onlin
   };
   const guild = {
     id: guildId,
+    name: 'Example server',
     members: {
       cache: new Map([
         [userIds[0], { displayName: 'First member' }],
         [userIds[1], { displayName: 'Second member' }],
-        [userIds[2], { displayName: 'Third member' }]
+        [userIds[2], { displayName: 'Third member' }],
+        [userIds[3], { displayName: 'Fourth member' }]
       ])
     },
     presences: {
@@ -40,23 +42,95 @@ test('builds one embed for at most five members with status, activity, and onlin
     const result = presenceMonitor.makePayload(guild, configuration, 2_000_000);
     const embed = result.payload.embeds[0].toJSON();
     assert.equal(embed.fields.length, 5);
-    assert.match(embed.title, /Server presence/);
-    assert.equal(embed.fields[0].name, 'First member');
+    assert.match(embed.title, /Server presence • Example server/);
+    assert.equal(embed.fields[0].name, '🟢 First member');
+    assert.match(embed.fields[0].value, new RegExp(`<@${userIds[0]}> \`${userIds[0]}\``));
     assert.match(embed.fields[0].value, /First observed online <t:1000:R>/);
     assert.match(embed.fields[0].value, /Playing a game/);
+    assert.match(embed.fields[1].name, /🟡 Second member/);
     assert.match(embed.fields[1].value, /Idle/);
+    assert.match(embed.fields[2].name, /🔴 Third member/);
     assert.match(embed.fields[2].value, /Do Not Disturb/);
+    assert.match(embed.fields[3].name, /⚫ Fourth member/);
     assert.match(embed.fields[3].value, /Offline/);
-    assert.equal(embed.fields[3].name, 'Unknown member');
+    assert.match(embed.fields[4].name, /❔ Unknown member/);
+    assert.match(embed.fields[4].value, /Status unavailable/);
+    assert.match(embed.fields[4].value, /Activity unavailable/);
     assert.ok(embed.fields.every(field => !field.name.includes('<@')));
-    assert.match(embed.description, /duration starts when Utils first observes a member online/);
+    assert.match(embed.description, /Last updated: <t:2000:R>\nNext update: <t:2100:R>/);
+    assert.equal(embed.footer, undefined);
     assert.deepEqual(result.onlineSince, {
       [userIds[0]]: 1_000,
       [userIds[1]]: 2_000,
       [userIds[2]]: 2_000
     });
     assert.equal(result.payload.components[0].components[0].data.custom_id, `presence:refresh:${guildId}`);
+    assert.match(result.payload.components[0].components[0].data.label, /Refresh/);
     assert.deepEqual(result.payload.allowedMentions, { parse: [] });
+  } finally {
+    database.closeAll();
+    fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
+  }
+});
+
+test('applies 15-second per-user and 5-second global presence refresh cooldowns', () => {
+  const time = 100_000;
+  const firstGuild = `refresh-guild-${randomUUID()}`;
+  const secondGuild = `refresh-guild-${randomUUID()}`;
+  const untouchedGuild = `refresh-guild-${randomUUID()}`;
+  const firstUser = `refresh-user-${randomUUID()}`;
+  const secondUser = `refresh-user-${randomUUID()}`;
+
+  assert.equal(presenceMonitor.takeRefreshCooldown(firstGuild, firstUser, time), null);
+  assert.equal(presenceMonitor.takeRefreshCooldown(secondGuild, secondUser, time + 1_000), null);
+  assert.deepEqual(presenceMonitor.takeRefreshCooldown(firstGuild, secondUser, time + 1_000), {
+    scope: 'guild',
+    remainingMs: 4_000
+  });
+  const makeGuild = id => ({
+    id,
+    name: id,
+    members: { cache: new Map() },
+    presences: { cache: new Map() }
+  });
+  const config = { userIds: [], accessMode: 'everyone', language: 'en', onlineSince: {} };
+  const cooldownPayload = presenceMonitor.makePayload(makeGuild(firstGuild), config, time + 1_000).payload;
+  const otherGuildPayload = presenceMonitor.makePayload(makeGuild(untouchedGuild), config, time + 1_000).payload;
+  assert.equal(cooldownPayload.components[0].components[0].data.disabled, true);
+  assert.match(cooldownPayload.components[0].components[0].data.label, /Wait 4s/);
+  assert.notEqual(otherGuildPayload.components[0].components[0].data.disabled, true);
+  assert.deepEqual(presenceMonitor.takeRefreshCooldown(firstGuild, firstUser, time + 5_000), {
+    scope: 'user',
+    remainingMs: 10_000
+  });
+  assert.equal(presenceMonitor.takeRefreshCooldown(firstGuild, firstUser, time + 15_000), null);
+});
+
+test('re-enables the shared refresh button after its server cooldown expires', async () => {
+  const guildId = `refresh-enable-${randomUUID()}`;
+  const userId = `refresh-enable-user-${randomUUID()}`;
+  const now = Date.now();
+  const edits = [];
+  const messageId = 'refresh-enable-message';
+  database.setGuildSetting(guildId, presenceMonitor.SETTING_KEY, {
+    channelId: 'refresh-enable-channel',
+    userIds: [userId],
+    accessMode: 'everyone',
+    messageId,
+    language: 'en',
+    onlineSince: {}
+  });
+  presenceMonitor.takeRefreshCooldown(guildId, userId, now - presenceMonitor.REFRESH_GLOBAL_COOLDOWN_MS - 1);
+
+  presenceMonitor.scheduleRefreshButtonEnable({
+    guildId,
+    message: { id: messageId, edit: async payload => edits.push(payload) }
+  }, now + 20);
+
+  try {
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(edits.length, 1);
+    assert.notEqual(edits[0].components[0].components[0].data.disabled, true);
   } finally {
     database.closeAll();
     fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });

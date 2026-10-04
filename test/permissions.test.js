@@ -9,6 +9,8 @@ test('exposes all Utils permissions, including explicit permission management', 
   for (const permission of Object.values(PERMISSIONS)) {
     assert.ok(Object.hasOwn(PERMISSION_LABELS, permission));
   }
+  assert.equal(PERMISSIONS.MANAGE_PRESENCE, 'manage_presence');
+  assert.equal(PERMISSIONS.MANAGE_PRESENCE, 'manage_presence');
 });
 
 test('only the server owner receives implicit full access', () => {
@@ -72,7 +74,7 @@ test('recognizes explicitly assigned permissions through member roles', () => {
   const seenRoles = [];
   database.hasPermission = (_guildId, _userId, permission, roles) => {
     seenRoles.push(roles);
-    return permission === PERMISSIONS.VIEW_STATS && roles.includes('role-b');
+    return [PERMISSIONS.VIEW_STATS, PERMISSIONS.MANAGE_PRESENCE].includes(permission) && roles.includes('role-b');
   };
 
   try {
@@ -88,8 +90,14 @@ test('recognizes explicitly assigned permissions through member roles', () => {
       };
       assert.equal(hasPermission(interaction, PERMISSIONS.VIEW_STATS), true);
       assert.equal(hasPermission(interaction, PERMISSIONS.EXPORT_DATA), false);
+      assert.equal(hasPermission(interaction, PERMISSIONS.MANAGE_PRESENCE), true);
+      assert.equal(canOpenServerDashboard(interaction), true);
     }
     assert.deepEqual(seenRoles.filter(roles => roles.length), [
+      ['role-a', 'role-b'],
+      ['role-a', 'role-b'],
+      ['role-a', 'role-b'],
+      ['role-a', 'role-b'],
       ['role-a', 'role-b'],
       ['role-a', 'role-b'],
       ['role-a', 'role-b'],

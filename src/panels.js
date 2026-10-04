@@ -57,7 +57,7 @@ function toolsPayload(interaction) {
 function managementPayload(interaction) {
   const language = database.getUser(owner(interaction)).language;
   const canStats = hasPermission(interaction, PERMISSIONS.VIEW_STATS);
-  const canManagePresence = hasPermission(interaction, PERMISSIONS.MANAGE_PERMISSIONS) && presenceMonitor.isAvailable();
+  const canManagePresence = hasPermission(interaction, PERMISSIONS.MANAGE_PRESENCE) && presenceMonitor.isAvailable();
   const stats = canStats ? database.getStats(interaction.guildId) : null;
   return { embeds: [embed(t(language, 'management_title'), t(language, 'management_description')).addFields({ name: t(language, 'management_audit'), value: canStats ? String(stats.audit) : t(language, 'access_required'), inline: true }, { name: t(language, 'management_permissions'), value: t(language, 'management_permission_note'), inline: true })], components: [row(button(`manage:database:${owner(interaction)}`, t(language, 'database_title'), ButtonStyle.Primary), button(`manage:stats:${owner(interaction)}`, t(language, 'server_stats_title')).setDisabled(!canStats)), row(button(`manage:health:${owner(interaction)}`, t(language, 'health_title')), button(`manage:presence:${owner(interaction)}`, t(language, 'presence_config_title')).setDisabled(!canManagePresence), button(`dashboard:home:${owner(interaction)}`, t(language, 'back')))], flags: MessageFlags.Ephemeral };
 }

@@ -331,7 +331,7 @@ async function handleButton(interaction) {
     if (action === 'health-refresh') return canOpenServerDashboard(interaction) ? interaction.update(panels.healthPayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_no_server_access')));
     if (action === 'presence') {
       if (!presenceMonitor.isAvailable()) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_unavailable')));
-      if (!hasPermission(interaction, PERMISSIONS.MANAGE_PERMISSIONS)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_manage_denied')));
+      if (!hasPermission(interaction, PERMISSIONS.MANAGE_PRESENCE)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_manage_denied')));
       const config = presenceMonitor.getConfiguration(interaction.guildId);
       selections.set(selectionKey(interaction), {
         ...(selections.get(selectionKey(interaction)) || {}),
@@ -377,7 +377,7 @@ async function handleButton(interaction) {
       if (interaction.customId.split(':')[2] !== interaction.guildId) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_access_denied')));
       return presenceMonitor.refreshInteraction(interaction);
     }
-    if (!interaction.guildId || !hasPermission(interaction, PERMISSIONS.MANAGE_PERMISSIONS)) {
+    if (!interaction.guildId || !hasPermission(interaction, PERMISSIONS.MANAGE_PRESENCE)) {
       return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'presence_manage_denied')));
     }
     const key = selectionKey(interaction);
