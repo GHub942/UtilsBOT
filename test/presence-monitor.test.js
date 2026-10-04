@@ -168,85 +168,12 @@ test('applies all configured refresh audience modes and presents manager control
     member: { roles: roleIds }
   });
 
-  test('routes the manager settings panel through channel, member, access, and publish selections', async () => {
-    const ownerId = `presence-config-owner-${randomUUID()}`;
-    const guildId = `presence-config-guild-${randomUUID()}`;
-    const memberId = `presence-config-member-${randomUUID()}`;
-    const originalNow = Date.now;
-    let now = 10_000;
-    Date.now = () => now;
-    const sent = [];
-    const channel = {
-      isTextBased: () => true,
-      send: async payload => {
-        sent.push(payload);
-        return { id: 'published-presence-message' };
-      },
-      messages: { fetch: async () => ({ edit: async () => {}, delete: async () => {} }) }
-    };
-    const guild = {
-      id: guildId,
-      ownerId,
-      channels: {
-        cache: new Map([['monitor-channel', channel]]),
-        fetch: async () => channel
-      },
-      presences: { cache: new Map([[memberId, { status: 'online', activities: [] }]]) }
-    };
-    const client = { guilds: { cache: new Map([[guildId, guild]]) }, commands: new Map() };
-    const makeInteraction = (customId, componentType, values = []) => ({
-      customId,
-      values,
-      user: { id: ownerId },
-      guildId,
-      guild,
-      client,
-      isChatInputCommand: () => false,
-      isModalSubmit: () => false,
-      isButton: () => componentType === 'button',
-      isStringSelectMenu: () => componentType === 'string',
-      isUserSelectMenu: () => componentType === 'user',
-      isRoleSelectMenu: () => false,
-      isChannelSelectMenu: () => componentType === 'channel',
-      isRepliable: () => true,
-      deferUpdate: async () => {},
-      editReply: async () => {},
-      reply: async () => {}
-    });
-
-    try {
-      database.setUserPreferences(ownerId, { language: 'en' });
-      await handleInteraction(client, makeInteraction(`manage:presence:${ownerId}`, 'button'));
-      now += 1_001;
-      await handleInteraction(client, makeInteraction(`presence:channel:${ownerId}`, 'channel', ['monitor-channel']));
-      now += 1_001;
-      await handleInteraction(client, makeInteraction(`presence:members:${ownerId}`, 'user', [memberId]));
-      now += 1_001;
-      await handleInteraction(client, makeInteraction(`presence:access:${ownerId}`, 'string', ['everyone']));
-      now += 1_001;
-      await handleInteraction(client, makeInteraction(`presence:save:${ownerId}`, 'button'));
-
-      const config = presenceMonitor.getConfiguration(guildId);
-      assert.equal(config.channelId, 'monitor-channel');
-      assert.deepEqual(config.userIds, [memberId]);
-      assert.equal(config.accessMode, 'everyone');
-      assert.equal(config.messageId, 'published-presence-message');
-      assert.equal(sent.length, 1);
-      assert.equal(sent[0].embeds.length, 1);
-    } finally {
-      Date.now = originalNow;
-      interactionCooldowns.delete(ownerId);
-      database.closeAll();
-      fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
-      database.deleteUserData(ownerId);
-    }
-  });
-
   try {
+    presenceMonitor.setAvailable(true);
     const owner = makeInteraction(ownerId);
     const member = makeInteraction(memberId);
     const permittedMember = makeInteraction(memberId, ['presence-reader-role']);
-    assert.equal(presenceMonitor.canRefresh(owner, { accessMode: 'nobody' }), true);
+    assert.equal(presenceMonitor.canRefresh(owner, { accessMode: 'nobody' }), false);
     assert.equal(presenceMonitor.canRefresh(member, { accessMode: 'owner' }), false);
     assert.equal(presenceMonitor.canRefresh(member, { accessMode: 'nobody' }), false);
     assert.equal(presenceMonitor.canRefresh(member, { accessMode: 'everyone' }), true);
@@ -266,10 +193,120 @@ test('applies all configured refresh audience modes and presents manager control
     assert.deepEqual(access.options.map(option => option.data.value), ['permission', 'owner', 'nobody', 'everyone']);
     assert.equal(controls.embeds.length, 1);
   } finally {
+    presenceMonitor.setAvailable(false);
     database.hasPermission = originalHasPermission;
     database.closeAll();
     fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
     database.deleteUserData(ownerId);
     database.deleteUserData(memberId);
+  }
+});
+
+test('routes the manager settings panel through channel, member, access, and publish selections', async () => {
+  const ownerId = `presence-config-owner-${randomUUID()}`;
+  const guildId = `presence-config-guild-${randomUUID()}`;
+  const memberId = `presence-config-member-${randomUUID()}`;
+  const originalNow = Date.now;
+  let now = 10_000;
+  Date.now = () => now;
+  const sent = [];
+  const channel = {
+    isTextBased: () => true,
+    send: async payload => {
+      sent.push(payload);
+      return { id: 'published-presence-message' };
+    },
+    messages: { fetch: async () => ({ edit: async () => {}, delete: async () => {} }) }
+  };
+  const guild = {
+    id: guildId,
+    ownerId,
+    channels: {
+      cache: new Map([['monitor-channel', channel]]),
+      fetch: async () => channel
+    },
+    presences: { cache: new Map([[memberId, { status: 'online', activities: [] }]]) }
+  };
+  const client = { guilds: { cache: new Map([[guildId, guild]]) }, commands: new Map() };
+  const makeInteraction = (customId, componentType, values = []) => ({
+    customId,
+    values,
+    user: { id: ownerId },
+    guildId,
+    guild,
+    client,
+    isChatInputCommand: () => false,
+    isModalSubmit: () => false,
+    isButton: () => componentType === 'button',
+    isStringSelectMenu: () => componentType === 'string',
+    isUserSelectMenu: () => componentType === 'user',
+    isRoleSelectMenu: () => false,
+    isChannelSelectMenu: () => componentType === 'channel',
+    isRepliable: () => true,
+    deferUpdate: async () => {},
+    editReply: async () => {},
+    reply: async () => {}
+  });
+
+  try {
+    presenceMonitor.setAvailable(true);
+    database.setUserPreferences(ownerId, { language: 'en' });
+    await handleInteraction(client, makeInteraction(`manage:presence:${ownerId}`, 'button'));
+    now += 1_001;
+    await handleInteraction(client, makeInteraction(`presence:channel:${ownerId}`, 'channel', ['monitor-channel']));
+    now += 1_001;
+    await handleInteraction(client, makeInteraction(`presence:members:${ownerId}`, 'user', [memberId]));
+    now += 1_001;
+    await handleInteraction(client, makeInteraction(`presence:access:${ownerId}`, 'string', ['everyone']));
+    now += 1_001;
+    await handleInteraction(client, makeInteraction(`presence:save:${ownerId}`, 'button'));
+
+    const config = presenceMonitor.getConfiguration(guildId);
+    assert.equal(config.channelId, 'monitor-channel');
+    assert.deepEqual(config.userIds, [memberId]);
+    assert.equal(config.accessMode, 'everyone');
+    assert.equal(config.messageId, 'published-presence-message');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].embeds.length, 1);
+  } finally {
+    presenceMonitor.setAvailable(false);
+    Date.now = originalNow;
+    interactionCooldowns.delete(ownerId);
+    database.closeAll();
+    fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
+    database.deleteUserData(ownerId);
+  }
+});
+
+test('removes a previously published message when presence monitoring is paused', async () => {
+  const guildId = `presence-pause-${randomUUID()}`;
+  let deleted = 0;
+  const message = { delete: async () => { deleted += 1; } };
+  const channel = { messages: { fetch: async () => message } };
+  const guild = {
+    id: guildId,
+    channels: { cache: new Map([['presence-channel', channel]]) }
+  };
+  const client = { guilds: { cache: new Map([[guildId, guild]]) } };
+  const logger = { warn: assert.fail };
+
+  try {
+    database.setGuildSetting(guildId, presenceMonitor.SETTING_KEY, {
+      channelId: 'presence-channel',
+      userIds: ['tracked-member'],
+      accessMode: 'owner',
+      messageId: 'presence-message',
+      onlineSince: {},
+      language: 'en'
+    });
+    presenceMonitor.setAvailable(true);
+    await presenceMonitor.pause(client, logger);
+    assert.equal(deleted, 1);
+    assert.equal(presenceMonitor.isAvailable(), false);
+    assert.equal(presenceMonitor.getConfiguration(guildId).messageId, null);
+  } finally {
+    presenceMonitor.setAvailable(false);
+    database.closeAll();
+    fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
   }
 });

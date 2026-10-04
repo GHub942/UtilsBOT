@@ -223,22 +223,13 @@ function getEquivalentZones(dateTime, zoneInfo) {
 
 function representativeCountries(offset, language = 'fr') {
   const countries = {
-    fr: {
-      0: ['Royaume-Uni', 'Islande', 'Ghana'],
-      60: ['France', 'Allemagne', 'Italie'],
-      120: ['Finlande', 'Roumanie', 'Afrique du Sud'],
-      180: ['Turquie', 'Arabie saoudite', 'Kenya'],
-      '-300': ['États-Unis', 'Canada', 'Colombie']
-    },
-    en: {
-      0: ['United Kingdom', 'Iceland', 'Ghana'],
-      60: ['France', 'Germany', 'Italy'],
-      120: ['Finland', 'Romania', 'South Africa'],
-      180: ['Turkey', 'Saudi Arabia', 'Kenya'],
-      '-300': ['United States', 'Canada', 'Colombia']
-    }
+    0: ['United Kingdom', 'Iceland', 'Ghana'],
+    60: ['France', 'Germany', 'Italy'],
+    120: ['Finland', 'Romania', 'South Africa'],
+    180: ['Turkey', 'Saudi Arabia', 'Kenya'],
+    '-300': ['United States', 'Canada', 'Colombia']
   };
-  return countries[language]?.[offset] || Array(3).fill(t(language, 'countries_same_offset'));
+  return countries[offset] || Array(3).fill(t(language, 'countries_same_offset'));
 }
 
 function discordTimestampFormats(seconds) {

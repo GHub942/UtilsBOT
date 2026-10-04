@@ -28,6 +28,7 @@ Environment variables:
 | `CLIENT_ID` | Yes | Application ID from the Discord Developer Portal |
 | `GUILD_ID` | No | Development server ID; omit for global command registration |
 | `LOG_LEVEL` | No | `error`, `warn`, `info` (default), or `debug`; launchers override it for the current run |
+| `PRESENCE_MONITOR_ENABLED` | No | Set to `true` only after enabling the privileged Presence Intent in the Discord Developer Portal; defaults to disabled |
 
 ## Features
 
@@ -57,7 +58,7 @@ Only explicit Utils permissions are used for delegated access; there is no white
 
 The guild owner has all Utils permissions and can assign any grantable permission, including permission management, to individual members or server roles. Other members receive only permissions explicitly assigned by the owner. Role permissions apply to all current and future members of the role. A delegated permission manager can grant or revoke only permissions they themselves hold; only the owner can delegate or revoke permission management. Discord's `Manage Server` permission does not grant Utils access.
 
-Presence monitoring uses Discord's privileged **Presence Intent**. Enable it in the Discord Developer Portal under the bot's Privileged Gateway Intents before starting the bot. The bot stores the selected member IDs, channel/message IDs, refresh policy, and observed online start times in that guild's local settings. Use a restricted text channel if the status information should not be visible to everyone on the server. Disabling the monitor removes its published message.
+Presence monitoring is opt-in. To use it, enable Discord's privileged **Presence Intent** in the Developer Portal under the bot's Privileged Gateway Intents, then set `PRESENCE_MONITOR_ENABLED=true` in `.env`. It defaults to disabled so an application without the privileged intent can still connect and run its other features. If Discord rejects the intent, the bot automatically reconnects without presence monitoring and removes its previously published status messages rather than crash-looping. The bot stores the selected member IDs, channel/message IDs, refresh policy, and observed online start times in that guild's local settings. Use a restricted text channel if the status information should not be visible to everyone on the server. Disabling the monitor removes its published message.
 
 Server reset requires two steps: an authorized member opens the confirmation form and enters the exact uppercase text `RESET`.
 

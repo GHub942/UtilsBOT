@@ -6,6 +6,15 @@ const { PERMISSIONS, hasPermission, isGuildOwner } = require('./permissions');
 const SETTING_KEY = 'presence_monitor';
 const REFRESH_INTERVAL_MS = 5 * 60_000;
 const VALID_ACCESS_MODES = new Set(['permission', 'owner', 'nobody', 'everyone']);
+let presenceAvailable = false;
+
+function isAvailable() {
+  return presenceAvailable;
+}
+
+function setAvailable(value) {
+  presenceAvailable = Boolean(value);
+}
 
 function getConfiguration(guildId) {
   return database.getGuildSetting(guildId, SETTING_KEY) || {
@@ -179,6 +188,7 @@ async function configure(client, guildId, updates) {
 }
 
 function canRefresh(interaction, configuration = getConfiguration(interaction.guildId)) {
+  if (configuration.accessMode === 'nobody') return false;
   if (isGuildOwner(interaction)) return true;
   if (configuration.accessMode === 'everyone') return true;
   if (configuration.accessMode === 'permission') return hasPermission(interaction, PERMISSIONS.VIEW_PRESENCE);
@@ -202,6 +212,7 @@ async function refreshInteraction(interaction) {
 }
 
 function start(client, logger) {
+  setAvailable(true);
   const publishConfigured = () => {
     for (const [guildId] of client.guilds.cache) {
       updatePublishedMessage(client, guildId).catch(error => logger.error('Could not update presence monitor', error.stack || error.message));
@@ -220,6 +231,30 @@ function start(client, logger) {
   publishConfigured();
 }
 
+async function pause(client, logger) {
+  setAvailable(false);
+  for (const [guildId] of client.guilds.cache) {
+    const configuration = getConfiguration(guildId);
+    if (!configuration.channelId || !configuration.messageId) continue;
+    try {
+      const guild = client.guilds.cache.get(guildId);
+      const channel = guild.channels.cache.get(configuration.channelId)
+        || await guild.channels.fetch(configuration.channelId);
+      const message = await channel.messages.fetch(configuration.messageId);
+      await message.delete();
+      configuration.messageId = null;
+      database.setGuildSetting(guildId, SETTING_KEY, configuration);
+    } catch (error) {
+      if (error.code === 10008) {
+        configuration.messageId = null;
+        database.setGuildSetting(guildId, SETTING_KEY, configuration);
+        continue;
+      }
+      logger.warn(`Could not remove the paused presence monitor message in guild ${guildId}.`, error.stack || error.message);
+    }
+  }
+}
+
 module.exports = {
   REFRESH_INTERVAL_MS,
   SETTING_KEY,
@@ -227,10 +262,13 @@ module.exports = {
   canRefresh,
   configure,
   getConfiguration,
+  isAvailable,
   makePayload,
+  pause,
   persistOnlineSince,
   recordPresenceUpdate,
   refreshInteraction,
   start,
+  setAvailable,
   updatePublishedMessage
 };

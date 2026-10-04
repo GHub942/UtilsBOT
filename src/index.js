@@ -6,6 +6,7 @@ const database = require('./database');
 const { t } = require('./i18n');
 const { acquireProcessLock } = require('./process-lock');
 const presenceMonitor = require('./presence-monitor');
+const { isDisallowedIntentsError } = require('./gateway');
 
 try {
   process.loadEnvFile(path.join(__dirname, '..', '.env'));
@@ -32,44 +33,15 @@ try {
 }
 process.once('exit', releaseProcessLock);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildPresences] });
-client.commands = new Collection();
-
 const commandsPath = path.join(__dirname, 'commands');
-for (const file of fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'))) {
-  const command = require(path.join(commandsPath, file));
-  if (command.data) client.commands.set(command.data.name, command);
-}
-
-client.once(Events.ClientReady, readyClient => {
-  logger.info(`Utils logged in as ${readyClient.user.tag}.`);
-  presenceMonitor.start(client, logger);
-});
-
-client.on(Events.InteractionCreate, interaction => {
-  const interactionType = interaction.isChatInputCommand()
-    ? `/${interaction.commandName}`
-    : interaction.customId
-      ? interaction.customId.split(':').slice(0, 2).join(':')
-      : 'unknown';
-  logger.debug('Interaction received', interactionType);
-  handleInteraction(client, interaction).catch(error => {
-    if (error.code === 10062 || error.code === 40060) {
-      logger.warn('Interaction expired or already acknowledged', `${interactionType} (${error.code})`);
-      return;
-    }
-    logger.error('Erreur interaction', error.stack || error.message);
-    if (interaction.isRepliable()) {
-      const language = interaction.locale?.startsWith('fr') ? 'fr' : 'en';
-      const payload = { embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(t(language, 'generic_error'))], flags: MessageFlags.Ephemeral };
-      const response = interaction.replied || interaction.deferred ? interaction.followUp(payload) : interaction.reply(payload);
-      response.catch(responseError => logger.warn('Could not report the interaction error to the user', responseError.stack || responseError.message));
-    }
-  });
-});
+const commandModules = fs.readdirSync(commandsPath)
+  .filter(file => file.endsWith('.js'))
+  .map(file => require(path.join(commandsPath, file)))
+  .filter(command => command.data);
+let client;
 
 function closeResources() {
-  client.destroy();
+  client?.destroy();
   database.closeAll();
 }
 
@@ -93,8 +65,79 @@ process.on('uncaughtException', error => {
   process.exit(1);
 });
 
-client.login(process.env.DISCORD_TOKEN).catch(error => {
-  logger.error('Could not connect to Discord', error.stack || error.message);
-  closeResources();
-  process.exitCode = 1;
-});
+function createClient(withPresenceIntent) {
+  const intents = [GatewayIntentBits.Guilds];
+  if (withPresenceIntent) intents.push(GatewayIntentBits.GuildPresences);
+  const activeClient = new Client({ intents });
+  activeClient.commands = new Collection();
+  for (const command of commandModules) activeClient.commands.set(command.data.name, command);
+
+  activeClient.once(Events.ClientReady, readyClient => {
+    logger.info(`Utils logged in as ${readyClient.user.tag}.`);
+    if (withPresenceIntent) presenceMonitor.start(activeClient, logger);
+    else {
+      logger.info('Presence monitoring is disabled. Set PRESENCE_MONITOR_ENABLED=true after enabling the Presence Intent in the Discord Developer Portal.');
+      presenceMonitor.pause(activeClient, logger).catch(error => logger.error('Could not pause presence monitoring', error.stack || error.message));
+    }
+  });
+
+  activeClient.on(Events.InteractionCreate, interaction => {
+    const interactionType = interaction.isChatInputCommand()
+      ? `/${interaction.commandName}`
+      : interaction.customId
+        ? interaction.customId.split(':').slice(0, 2).join(':')
+        : 'unknown';
+    logger.debug('Interaction received', interactionType);
+    handleInteraction(activeClient, interaction).catch(error => {
+      if (error.code === 10062 || error.code === 40060) {
+        logger.warn('Interaction expired or already acknowledged', `${interactionType} (${error.code})`);
+        return;
+      }
+      logger.error('Interaction error', error.stack || error.message);
+      if (interaction.isRepliable()) {
+        const language = interaction.locale?.startsWith('fr') ? 'fr' : 'en';
+        const payload = { embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(t(language, 'generic_error'))], flags: MessageFlags.Ephemeral };
+        const response = interaction.replied || interaction.deferred ? interaction.followUp(payload) : interaction.reply(payload);
+        response.catch(responseError => logger.warn('Could not report the interaction error to the user', responseError.stack || responseError.message));
+      }
+    });
+  });
+
+  if (withPresenceIntent) {
+    activeClient.on(Events.ShardDisconnect, closeEvent => {
+      if (isDisallowedIntentsError({ code: closeEvent.code, message: closeEvent.reason })) {
+        fallbackWithoutPresence(activeClient);
+      }
+    });
+  }
+
+  return activeClient;
+}
+
+function fallbackWithoutPresence(activeClient) {
+  if (client !== activeClient) return;
+  logger.warn('Discord denied the privileged Presence Intent. Retrying without presence monitoring. Enable the intent in the Developer Portal to use this feature.');
+  activeClient.destroy();
+  presenceMonitor.setAvailable(false);
+  connect(false);
+}
+
+async function connect(withPresenceIntent) {
+  const activeClient = createClient(withPresenceIntent);
+  client = activeClient;
+  try {
+    await activeClient.login(process.env.DISCORD_TOKEN);
+  } catch (error) {
+    if (client !== activeClient) return;
+    if (withPresenceIntent && isDisallowedIntentsError(error)) {
+      fallbackWithoutPresence(activeClient);
+      return;
+    }
+    logger.error('Could not connect to Discord', error.stack || error.message);
+    closeResources();
+    process.exitCode = 1;
+  }
+}
+
+const presenceIntentEnabled = process.env.PRESENCE_MONITOR_ENABLED?.trim().toLowerCase() === 'true';
+connect(presenceIntentEnabled);

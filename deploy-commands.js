@@ -13,7 +13,7 @@ try {
 }
 
 if (!process.env.DISCORD_TOKEN || !process.env.CLIENT_ID) {
-  throw new Error('DISCORD_TOKEN et CLIENT_ID sont requis dans le fichier .env');
+  throw new Error('DISCORD_TOKEN and CLIENT_ID are required in the .env file.');
 }
 
 const commandsPath = path.join(__dirname, 'src', 'commands');

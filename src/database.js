@@ -275,7 +275,7 @@ function exportGuild(guildId) {
 function resetGuild(guildId, actorId = 'system') {
   const database = openDatabase('guild', guildId);
   database.exec('DELETE FROM permissions; DELETE FROM role_permissions; DELETE FROM settings; DELETE FROM audit_log;');
-  addAudit(guildId, 'guild.reset', actorId, 'Donnees serveur reinitialisees');
+  addAudit(guildId, 'guild.reset', actorId, 'Server data reset');
 }
 
 module.exports = {
