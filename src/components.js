@@ -1,42 +1,46 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } = require('discord.js');
+const { t } = require('./i18n');
 
 const ZONES = [
-  ['CET', 'Fixed Central European Standard Time (+01:00)'],
-  ['CEST', 'Fixed Central European Summer Time (+02:00)'],
-  ['EST', 'Fixed Eastern Standard Time (-05:00)'],
-  ['EDT', 'Fixed Eastern Daylight Time (-04:00)'],
-  ['PST', 'Fixed Pacific Standard Time (-08:00)'],
-  ['PDT', 'Fixed Pacific Daylight Time (-07:00)'],
   ['Europe/Paris', 'Paris, Brussels, Madrid'],
-  ['Europe/London', 'London, Lisbon'],
+  ['Europe/London', 'London, Dublin, Lisbon'],
+  ['Europe/Berlin', 'Berlin, Rome, Madrid'],
   ['America/New_York', 'New York, Toronto'],
-  ['America/Los_Angeles', 'Los Angeles, Vancouver'],
   ['America/Chicago', 'Chicago, Mexico City'],
-  ['America/Sao_Paulo', 'Sao Paulo'],
-  ['Asia/Dubai', 'Dubai'],
+  ['America/Los_Angeles', 'Los Angeles, Vancouver'],
+  ['America/Sao_Paulo', 'Sao Paulo, Buenos Aires'],
+  ['Asia/Dubai', 'Dubai, Abu Dhabi'],
   ['Asia/Kolkata', 'New Delhi, Mumbai'],
-  ['Asia/Shanghai', 'Shanghai, Beijing'],
   ['Asia/Tokyo', 'Tokyo'],
-  ['Australia/Sydney', 'Sydney']
+  ['Australia/Sydney', 'Sydney, Melbourne']
 ];
 
-function zoneOptions(selected) {
-  return ZONES.map(([value, description]) => ({ label: value, value, description, default: value === selected }));
+function zoneOptions(selected, language = 'fr') {
+  return [
+    ['UTC', t(language, 'zone_utc_description')],
+    ['GMT', t(language, 'zone_gmt_description')],
+    ...ZONES
+  ].map(([value, description]) => ({
+    label: value,
+    value,
+    description,
+    default: value === selected
+  }));
 }
 
-function zoneSelect(customId, placeholder, selected) {
+function zoneSelect(customId, placeholder, selected, language = 'fr') {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(customId)
       .setPlaceholder(placeholder)
-      .addOptions(zoneOptions(selected))
+      .addOptions(zoneOptions(selected, language))
   );
 }
 
-function dateButton(customId) {
+function dateButton(customId, language = 'fr') {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(customId).setLabel('Saisir la date').setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId(customId).setLabel(t(language, 'date_enter')).setStyle(ButtonStyle.Primary)
   );
 }
 
-module.exports = { dateButton, zoneSelect, ZONES };
+module.exports = { dateButton, zoneSelect, zoneOptions, ZONES };

@@ -7,8 +7,12 @@ const {
   discordTimestampFormats,
   formatLocal,
   isSelectableZone,
+  normalizeDateInput,
+  normalizeTimeInput,
   parseDateTime,
   resolveZone,
+  seasonalUtcGmt,
+  storedTimeZone,
   timeInputExample
 } = require('../src/time');
 
@@ -20,9 +24,22 @@ test('resolves IANA zones and valid fixed offsets within the UTC range', () => {
   assert.equal(resolveZone('Invalid/Zone'), null);
 });
 
-test('offers fixed named zones and IANA zones but not UTC/GMT formats', () => {
+test('accepts fixed abbreviations, UTC/GMT offsets, and IANA zones', () => {
   for (const zone of ['CET', 'CEST', 'Europe/Paris', 'America/New_York']) assert.equal(isSelectableZone(zone), true);
-  for (const zone of ['UTC', 'GMT', 'UTC+01:00', 'Etc/GMT-1', 'SystemV/EST5']) assert.equal(isSelectableZone(zone), false);
+  for (const zone of ['UTC', 'GMT', 'UTC+01:00', 'GMT-5', 'Etc/GMT-1', 'SystemV/EST5']) assert.equal(isSelectableZone(zone), true);
+  assert.equal(isSelectableZone('UTC_AUTO'), false);
+  assert.equal(isSelectableZone('UTC+14:01'), false);
+  assert.equal(isSelectableZone('Not/AZone'), false);
+});
+
+test('uses UTC in Central European winter and GMT in summer at the same zero offset', () => {
+  const winter = DateTime.fromISO('2026-01-15T12:00:00Z');
+  const summer = DateTime.fromISO('2026-07-15T12:00:00Z');
+  assert.equal(seasonalUtcGmt(winter), 'UTC');
+  assert.equal(seasonalUtcGmt(summer), 'GMT');
+  assert.equal(DateTime.now().setZone(resolveZone('UTC_AUTO').zone).offset, 0);
+  assert.equal(storedTimeZone('UTC'), 'UTC_AUTO');
+  assert.equal(storedTimeZone('GMT'), 'UTC_AUTO');
 });
 
 test('parses local dates using the selected preference format', () => {
@@ -46,7 +63,7 @@ test('requires an explicit choice for ambiguous local time at the daylight-savin
   assert.deepEqual(ambiguous.ambiguous.map(value => value.offset), [120, 60]);
   assert.equal(parseDateTime('25/10/2026 02:30', 'Europe/Paris', { disambiguation: 0 }).dateTime.offset, 120);
   assert.equal(parseDateTime('25/10/2026 02:30', 'Europe/Paris', { disambiguation: 1 }).dateTime.offset, 60);
-  assert.match(parseDateTime('25/10/2026 02:30', 'Europe/Paris', { disambiguation: 4 }).error, /selection/);
+  assert.match(parseDateTime('25/10/2026 02:30', 'Europe/Paris', { disambiguation: 4 }).error, /invalide/);
 });
 
 test('rejects nonexistent local time at the daylight-saving gap', () => {
@@ -59,6 +76,17 @@ test('builds examples and all Discord timestamp formats', () => {
   assert.equal(dateInputExample({ isoDates: true }), '2026-09-03');
   assert.equal(timeInputExample({ timeFormats: ['HM'], timeSeparator: '.', showSeconds: false }), '14.30');
   assert.deepEqual(Object.keys(discordTimestampFormats(1)), ['d', 'D', 't', 'T', 'f', 'F', 'R']);
+});
+
+test('normalizes short date and time input according to saved preferences', () => {
+  assert.equal(normalizeDateInput('4/10/26', { dateFormats: ['DMY'], dateSeparator: '/' }), '04/10/2026');
+  assert.equal(normalizeDateInput('4.10.26', { dateFormats: ['MDY'], dateSeparator: '.' }), '04.10.2026');
+  assert.equal(normalizeDateInput('2026-4-10', { dateFormats: ['DMY'], isoDates: true }), '2026-04-10');
+  assert.equal(normalizeDateInput('not a date'), 'not a date');
+  assert.equal(normalizeTimeInput('13:00'), '13:00:00');
+  assert.equal(normalizeTimeInput('3:04:05'), '03:04:05');
+  assert.equal(normalizeTimeInput('14h 30m'), '14:30:00');
+  assert.equal(normalizeTimeInput('invalid'), 'invalid');
 });
 
 test('formats tool results using the selected date, time, and ISO preferences', () => {

@@ -1,5 +1,5 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const { dateInputExample, discordTimestampFormats, formatLocal, isSelectableZone, parseDateTime, timeInputExample } = require('../time');
+const { dateInputExample, discordTimestampFormats, formatLocal, isSelectableZone, normalizeDateInput, normalizeTimeInput, parseDateTime, timeInputExample } = require('../time');
 const database = require('../database');
 const panels = require('../panels');
 const { t } = require('../i18n');
@@ -104,7 +104,8 @@ async function updateAfterModal(interaction, draft) {
 async function handleModal(interaction) {
   const field = interaction.customId.split(':')[2];
   const draft = getDraft(interaction.user.id);
-  draft[field] = interaction.fields.getTextInputValue(field).trim();
+  const value = interaction.fields.getTextInputValue(field).trim();
+  draft[field] = field === 'date' ? normalizeDateInput(value, draft) : normalizeTimeInput(value);
   return updateAfterModal(interaction, draft);
 }
 
@@ -136,7 +137,7 @@ function showAmbiguity(interaction, options, draft) {
 async function confirm(interaction) {
   const draft = getDraft(interaction.user.id);
   const language = draft.language || 'fr';
-  const parsed = parseDateTime(`${draft.date} ${draft.time}`, draft.zone, database.getUser(interaction.user.id));
+  const parsed = parseDateTime(`${draft.date} ${draft.time}`, draft.zone, draft);
   if (parsed.ambiguous) return showAmbiguity(interaction, parsed.ambiguous, draft);
   if (parsed.error) {
     return interaction.update({
@@ -188,6 +189,7 @@ async function handleDisambiguation(interaction, index) {
 
 module.exports = {
   execute,
+  confirm,
   drafts,
   getDraft,
   handleModal,

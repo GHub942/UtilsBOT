@@ -1,30 +1,68 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { PermissionFlagsBits } = require('discord.js');
-const { PERMISSIONS, PERMISSION_LABELS, grantPermission, hasPermission } = require('../src/permissions');
+const database = require('../src/database');
+const { PERMISSIONS, PERMISSION_LABELS, canManagePermission, canOpenServerDashboard, grantPermission, hasPermission } = require('../src/permissions');
 
-test('exposes only explicit, assignable Utils permissions', () => {
+test('exposes all Utils permissions, including explicit permission management', () => {
   assert.equal(Object.hasOwn(PERMISSIONS, 'VIEW_WHITELIST'), false);
   assert.equal(Object.hasOwn(PERMISSIONS, 'MANAGE_WHITELIST'), false);
-  assert.equal(Object.hasOwn(PERMISSION_LABELS, PERMISSIONS.MANAGE_PERMISSIONS), false);
-  assert.throws(() => grantPermission('guild', 'member', PERMISSIONS.MANAGE_PERMISSIONS, 'admin'), /inconnue/i);
+  for (const permission of Object.values(PERMISSIONS)) {
+    assert.ok(Object.hasOwn(PERMISSION_LABELS, permission));
+  }
 });
 
-test('keeps server-owner and Manage Server administrative access', () => {
+test('only the server owner receives implicit full access', () => {
   const owner = {
     guild: { ownerId: 'owner' },
     guildId: 'guild',
     user: { id: 'owner' },
-    memberPermissions: { has: () => false }
+    memberPermissions: { has: () => true }
   };
-  const administrator = {
+  const discordAdministrator = {
     guild: { ownerId: 'different-user' },
     guildId: 'guild',
     user: { id: 'admin' },
-    memberPermissions: { has: permission => permission === PermissionFlagsBits.ManageGuild }
+    memberPermissions: { has: () => true }
   };
+  const storedHasPermission = database.hasPermission;
+  database.hasPermission = () => false;
 
-  assert.equal(hasPermission(owner, PERMISSIONS.RESET_DATA), true);
-  assert.equal(hasPermission(administrator, PERMISSIONS.VIEW_STATS), true);
-  assert.equal(hasPermission(administrator, PERMISSIONS.MANAGE_PERMISSIONS), true);
+  try {
+    assert.equal(hasPermission(owner, PERMISSIONS.RESET_DATA), true);
+    assert.equal(canOpenServerDashboard(owner), true);
+    assert.equal(hasPermission(discordAdministrator, PERMISSIONS.VIEW_STATS), false);
+    assert.equal(hasPermission(discordAdministrator, PERMISSIONS.MANAGE_PERMISSIONS), false);
+    assert.equal(canOpenServerDashboard(discordAdministrator), false);
+    assert.equal(canManagePermission(discordAdministrator, PERMISSIONS.VIEW_STATS), false);
+  } finally {
+    database.hasPermission = storedHasPermission;
+  }
+});
+
+test('requires each non-owner Utils permission explicitly and allows granting the permission manager role', () => {
+  const interaction = {
+    guild: { ownerId: 'owner' },
+    guildId: 'guild',
+    user: { id: 'member' }
+  };
+  const storedHasPermission = database.hasPermission;
+  const storedGrantPermission = database.grantPermission;
+  const grants = [];
+  database.hasPermission = (_guildId, _userId, permission) => permission === PERMISSIONS.VIEW_DATA;
+  database.grantPermission = (...args) => grants.push(args);
+
+  try {
+    assert.equal(hasPermission(interaction, PERMISSIONS.VIEW_DATA), true);
+    assert.equal(hasPermission(interaction, PERMISSIONS.EXPORT_DATA), false);
+    assert.equal(canOpenServerDashboard(interaction), true);
+    assert.equal(canManagePermission(interaction, PERMISSIONS.VIEW_DATA), true);
+    assert.equal(canManagePermission(interaction, PERMISSIONS.EXPORT_DATA), false);
+    assert.equal(canManagePermission(interaction, PERMISSIONS.MANAGE_PERMISSIONS), false);
+    grantPermission('guild', 'delegate', PERMISSIONS.MANAGE_PERMISSIONS, 'owner');
+    assert.deepEqual(grants, [['guild', 'delegate', PERMISSIONS.MANAGE_PERMISSIONS, 'owner']]);
+    assert.throws(() => grantPermission('guild', 'owner', PERMISSIONS.MANAGE_PERMISSIONS, 'owner'), /yourself/);
+  } finally {
+    database.hasPermission = storedHasPermission;
+    database.grantPermission = storedGrantPermission;
+  }
 });

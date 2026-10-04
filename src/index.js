@@ -3,13 +3,14 @@ const path = require('path');
 const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
 const { handleInteraction } = require('./interactions');
 const database = require('./database');
+const { t } = require('./i18n');
 const { acquireProcessLock } = require('./process-lock');
 
 try {
   process.loadEnvFile(path.join(__dirname, '..', '.env'));
 } catch (error) {
   if (error.code === 'ENOENT') {
-    console.error('Le fichier .env est introuvable. Copie .env.example vers .env puis configure le bot.');
+    console.error('The .env file is missing. Copy .env.example to .env and configure the bot.');
     process.exit(1);
   }
   throw error;
@@ -17,7 +18,7 @@ try {
 const logger = require('./logger');
 
 if (!process.env.DISCORD_TOKEN) {
-  console.error('DISCORD_TOKEN manquant dans le fichier .env.');
+  console.error('DISCORD_TOKEN is missing from the .env file.');
   process.exit(1);
 }
 
@@ -40,7 +41,7 @@ for (const file of fs.readdirSync(commandsPath).filter(file => file.endsWith('.j
 }
 
 client.once(Events.ClientReady, readyClient => {
-  logger.info(`Utils connecte en tant que ${readyClient.user.tag}.`);
+  logger.info(`Utils logged in as ${readyClient.user.tag}.`);
 });
 
 client.on(Events.InteractionCreate, interaction => {
@@ -49,17 +50,18 @@ client.on(Events.InteractionCreate, interaction => {
     : interaction.customId
       ? interaction.customId.split(':').slice(0, 2).join(':')
       : 'unknown';
-  logger.debug('Interaction reçue', interactionType);
+  logger.debug('Interaction received', interactionType);
   handleInteraction(client, interaction).catch(error => {
     if (error.code === 10062 || error.code === 40060) {
-      logger.warn('Interaction expirée ou déjà acquittée', `${interactionType} (${error.code})`);
+      logger.warn('Interaction expired or already acknowledged', `${interactionType} (${error.code})`);
       return;
     }
     logger.error('Erreur interaction', error.stack || error.message);
     if (interaction.isRepliable()) {
-      const payload = { content: 'Une erreur est survenue. Consulte les logs du bot.', flags: MessageFlags.Ephemeral };
+      const language = interaction.locale?.startsWith('fr') ? 'fr' : 'en';
+      const payload = { content: t(language, 'generic_error'), flags: MessageFlags.Ephemeral };
       const response = interaction.replied || interaction.deferred ? interaction.followUp(payload) : interaction.reply(payload);
-      response.catch(responseError => logger.warn('Impossible de signaler l’erreur à l’utilisateur', responseError.stack || responseError.message));
+      response.catch(responseError => logger.warn('Could not report the interaction error to the user', responseError.stack || responseError.message));
     }
   });
 });
@@ -70,27 +72,27 @@ function closeResources() {
 }
 
 process.once('SIGINT', () => {
-  logger.info('Arrêt demandé.');
+  logger.info('Shutdown requested.');
   closeResources();
 });
 process.once('SIGTERM', () => {
-  logger.info('Arrêt demandé.');
+  logger.info('Shutdown requested.');
   closeResources();
 });
 
 process.on('unhandledRejection', error => {
-  logger.error('Promesse non geree', error?.stack || String(error));
+  logger.error('Unhandled promise rejection', error?.stack || String(error));
   process.exitCode = 1;
   closeResources();
 });
 process.on('uncaughtException', error => {
-  logger.error('Exception non geree', error.stack || error.message);
+  logger.error('Uncaught exception', error.stack || error.message);
   closeResources();
   process.exit(1);
 });
 
 client.login(process.env.DISCORD_TOKEN).catch(error => {
-  logger.error('Connexion Discord impossible', error.stack || error.message);
+  logger.error('Could not connect to Discord', error.stack || error.message);
   closeResources();
   process.exitCode = 1;
 });

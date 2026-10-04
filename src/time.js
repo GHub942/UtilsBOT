@@ -1,4 +1,5 @@
 const { DateTime, FixedOffsetZone, IANAZone } = require('luxon');
+const { t } = require('./i18n');
 
 const FIXED_ALIASES = new Map([
   ['UTC', 0],
@@ -38,6 +39,17 @@ const FIXED_ALIASES = new Map([
 ]);
 
 const SELECTABLE_FIXED_ZONES = new Set(['CET', 'CEST', 'EST', 'EDT', 'PST', 'PDT']);
+const AUTOMATIC_UTC_ZONE = 'UTC_AUTO';
+
+function seasonalUtcGmt(at = DateTime.now()) {
+  const centralEurope = (DateTime.isDateTime(at) ? at : DateTime.fromJSDate(at)).setZone('Europe/Paris');
+  return centralEurope.isInDST ? 'GMT' : 'UTC';
+}
+
+function storedTimeZone(input) {
+  const name = String(input || '').trim();
+  return /^(UTC|GMT)$/i.test(name) ? AUTOMATIC_UTC_ZONE : name;
+}
 
 function normalizeZoneName(input) {
   return String(input || '').trim().toUpperCase();
@@ -46,6 +58,9 @@ function normalizeZoneName(input) {
 function resolveZone(input) {
   const name = String(input || '').trim();
   const normalized = normalizeZoneName(name);
+  if (normalized === AUTOMATIC_UTC_ZONE) {
+    return { zone: FixedOffsetZone.instance(0), label: seasonalUtcGmt(), canonical: 'UTC+00:00' };
+  }
   if (FIXED_ALIASES.has(normalized)) {
     const minutes = FIXED_ALIASES.get(normalized);
     return { zone: FixedOffsetZone.instance(minutes), label: name || 'UTC', canonical: `UTC${formatOffset(minutes)}` };
@@ -65,8 +80,8 @@ function resolveZone(input) {
 
 function isSelectableZone(input) {
   const name = String(input || '').trim();
-  if (SELECTABLE_FIXED_ZONES.has(name.toUpperCase())) return true;
-  if (/^(UTC|GMT|ETC\/|SYSTEMV\/)/i.test(name)) return false;
+  if (FIXED_ALIASES.has(normalizeZoneName(name))) return true;
+  if (/^(UTC|GMT)[+-]\d{1,2}(?::?\d{2})?$/i.test(name)) return Boolean(resolveZone(name));
   return IANAZone.isValidZone(name);
 }
 
@@ -93,9 +108,37 @@ function timeInputExample(preferences = {}) {
   return ['14', '30', ...(preferences.showSeconds === false || format === 'HM' ? [] : ['00'])].join(separator);
 }
 
+function normalizeDateInput(input, preferences = {}) {
+  const value = String(input || '').trim();
+  const parts = value.split(/[.,/-]/);
+  if (parts.length !== 3 || parts.some(part => !/^\d{1,4}$/.test(part))) return value;
+
+  const yearFirst = parts[0].length === 4;
+  const format = yearFirst ? 'YMD' : preferences.dateFormats?.[0] || 'DMY';
+  const yearPart = format === 'YMD' ? parts[0] : parts[2];
+  const year = Number(yearPart.length === 2 ? `20${yearPart}` : yearPart);
+  const month = Number(format === 'MDY' ? parts[0] : parts[1]);
+  const day = Number(format === 'MDY' ? parts[1] : format === 'YMD' ? parts[2] : parts[0]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return value;
+
+  if (preferences.isoDates) return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const separator = preferences.dateSeparator || '/';
+  if (format === 'YMD') return [year, month, day].map((part, index) => String(part).padStart(index === 0 ? 4 : 2, '0')).join(separator);
+  const ordered = format === 'MDY' ? [month, day, year] : [day, month, year];
+  return ordered.map((part, index) => String(part).padStart(index === 2 ? 4 : 2, '0')).join(separator);
+}
+
+function normalizeTimeInput(input) {
+  const value = String(input || '').trim();
+  const match = /^(\d{1,2})(?::|[hH,.-]\s*)(\d{2})(?:(?::|[mM,.-]\s*)(\d{2})s?)?m?$/.exec(value);
+  if (!match) return value;
+  return `${match[1].padStart(2, '0')}:${match[2]}:${(match[3] || '00').padStart(2, '0')}`;
+}
+
 function parseDateTime(input, zoneInput, preferences = {}) {
+  const language = preferences.language || 'fr';
   const zoneInfo = resolveZone(zoneInput || 'UTC');
-  if (!zoneInfo) return { error: `Fuseau inconnu : ${zoneInput}` };
+  if (!zoneInfo) return { error: t(language, 'error_unknown_timezone').replace('{zone}', String(zoneInput)) };
   const value = String(input || '').trim();
   let dateTime;
   const isoValue = value.replace(/^(\d{4}-\d{2}-\d{2})\s+/, '$1T');
@@ -104,9 +147,9 @@ function parseDateTime(input, zoneInput, preferences = {}) {
     dateTime = iso;
   } else {
     const dateMatch = /^(\d{1,4})[.,/-](\d{1,4})[.,/-](\d{1,4})[ ,T]+(.+)$/.exec(value);
-    if (!dateMatch) return { error: 'Date invalide. Utilise JJ/MM/AAAA HH:mm ou ISO 8601.' };
+    if (!dateMatch) return { error: t(language, 'error_invalid_datetime') };
     const timeMatch = /^(\d{1,2})(?::|[hH,.-]\s*)(\d{2})(?:(?::|[mM,.-]\s*)(\d{2})s?)?$/.exec(dateMatch[4].trim());
-    if (!timeMatch) return { error: 'Heure invalide. Utilise HH:MM, HH:MM:SS ou HHh MMm SSs.' };
+    if (!timeMatch) return { error: t(language, 'error_invalid_time') };
     const formats = preferences.dateFormats || ['DMY'];
     for (const format of formats) {
       const yearValue = format === 'YMD' ? dateMatch[1] : dateMatch[3];
@@ -124,7 +167,7 @@ function parseDateTime(input, zoneInput, preferences = {}) {
           second: Number(timeMatch[3] || 0)
         };
         if (Object.entries(expected).some(([part, value]) => candidate[part] !== value)) {
-          return { error: 'Cette heure locale n’existe pas à cause du passage à l’heure d’été. Choisis une heure valide dans ce fuseau.' };
+          return { error: t(language, 'error_dst_gap') };
         }
         const possibleOffsets = candidate.getPossibleOffsets();
         if (possibleOffsets.length > 1) {
@@ -132,7 +175,7 @@ function parseDateTime(input, zoneInput, preferences = {}) {
             return { ambiguous: possibleOffsets, zoneInfo };
           }
           if (!Number.isInteger(preferences.disambiguation) || !possibleOffsets[preferences.disambiguation]) {
-            return { error: 'Invalid daylight-saving time selection.' };
+            return { error: t(language, 'error_invalid_dst_choice') };
           }
           dateTime = possibleOffsets[preferences.disambiguation];
           break;
@@ -142,7 +185,7 @@ function parseDateTime(input, zoneInput, preferences = {}) {
       }
     }
   }
-  if (!dateTime || !dateTime.isValid || dateTime.invalidReason === 'unparsable') return { error: 'Date invalide ou heure invalide. Vérifie le format configuré.' };
+  if (!dateTime || !dateTime.isValid || dateTime.invalidReason === 'unparsable') return { error: t(language, 'error_invalid_datetime_format') };
   return { dateTime, zoneInfo };
 }
 
@@ -178,15 +221,24 @@ function getEquivalentZones(dateTime, zoneInfo) {
   return [...names].sort();
 }
 
-function representativeCountries(offset) {
+function representativeCountries(offset, language = 'fr') {
   const countries = {
-    0: ['Royaume-Uni', 'Islande', 'Ghana'],
-    60: ['France', 'Allemagne', 'Italie'],
-    120: ['Finlande', 'Roumanie', 'Afrique du Sud'],
-    180: ['Turquie', 'Arabie saoudite', 'Kenya'],
-    '-300': ['États-Unis', 'Canada', 'Colombie']
+    fr: {
+      0: ['Royaume-Uni', 'Islande', 'Ghana'],
+      60: ['France', 'Allemagne', 'Italie'],
+      120: ['Finlande', 'Roumanie', 'Afrique du Sud'],
+      180: ['Turquie', 'Arabie saoudite', 'Kenya'],
+      '-300': ['États-Unis', 'Canada', 'Colombie']
+    },
+    en: {
+      0: ['United Kingdom', 'Iceland', 'Ghana'],
+      60: ['France', 'Germany', 'Italy'],
+      120: ['Finland', 'Romania', 'South Africa'],
+      180: ['Turkey', 'Saudi Arabia', 'Kenya'],
+      '-300': ['United States', 'Canada', 'Colombia']
+    }
   };
-  return countries[offset] || ['Pays avec le même offset', 'Pays avec le même offset', 'Pays avec le même offset'];
+  return countries[language]?.[offset] || Array(3).fill(t(language, 'countries_same_offset'));
 }
 
 function discordTimestampFormats(seconds) {
@@ -207,4 +259,4 @@ function arrivalModesForDate(dateTime) {
   return [...new Set(offsets)];
 }
 
-module.exports = { arrivalModesForDate, dateInputExample, discordTimestampFormats, formatLocal, formatOffset, getEquivalentZones, isSelectableZone, parseDateTime, representativeCountries, resolveZone, timeInputExample };
+module.exports = { AUTOMATIC_UTC_ZONE, arrivalModesForDate, dateInputExample, discordTimestampFormats, formatLocal, formatOffset, getEquivalentZones, isSelectableZone, normalizeDateInput, normalizeTimeInput, parseDateTime, representativeCountries, resolveZone, seasonalUtcGmt, storedTimeZone, timeInputExample };

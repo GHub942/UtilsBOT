@@ -1,4 +1,3 @@
-const { PermissionFlagsBits } = require('discord.js');
 const database = require('./database');
 
 const PERMISSIONS = Object.freeze({
@@ -11,16 +10,13 @@ const PERMISSIONS = Object.freeze({
 });
 
 const PERMISSION_LABELS = Object.freeze({
-  view_stats: '📊 Voir les statistiques',
-  view_data: '🗄️ Voir la base de données',
-  export_data: '📦 Exporter les données',
-  manage_user_data: '🧑 Gérer les données utilisateur',
-  reset_data: '♻️ Réinitialiser les données'
+  view_stats: 'permission_view_stats',
+  view_data: 'permission_view_data',
+  export_data: 'permission_export_data',
+  manage_user_data: 'permission_manage_user_data',
+  reset_data: 'permission_reset_data',
+  manage_permissions: 'permission_manage_permissions'
 });
-
-function isServerManager(interaction) {
-  return Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
-}
 
 function isGuildOwner(interaction) {
   return Boolean(interaction.guild?.ownerId === interaction.user?.id);
@@ -28,29 +24,44 @@ function isGuildOwner(interaction) {
 
 function hasPermission(interaction, permission) {
   if (isGuildOwner(interaction)) return true;
-  if (permission === PERMISSIONS.VIEW_DATA && (hasStoredPermission(interaction, PERMISSIONS.MANAGE_USER_DATA) || hasStoredPermission(interaction, PERMISSIONS.EXPORT_DATA))) return true;
-  if (permission === PERMISSIONS.EXPORT_DATA && hasStoredPermission(interaction, PERMISSIONS.MANAGE_USER_DATA)) return true;
-  if (permission === PERMISSIONS.VIEW_STATS) return isServerManager(interaction) || hasStoredPermission(interaction, permission);
-  if (permission === PERMISSIONS.MANAGE_PERMISSIONS) return isServerManager(interaction) || isGuildOwner(interaction);
   return hasStoredPermission(interaction, permission);
 }
 
 function hasStoredPermission(interaction, permission) {
-  return Boolean(interaction.guildId && database.hasPermission(interaction.guildId, interaction.user.id, permission));
+  const roleIds = interaction.member?.roles?.cache
+    ? [...interaction.member.roles.cache.keys()]
+    : [];
+  return Boolean(interaction.guildId && database.hasPermission(interaction.guildId, interaction.user.id, permission, roleIds));
 }
 
 function canOpenServerDashboard(interaction) {
   return Object.values(PERMISSIONS).some(permission => hasPermission(interaction, permission));
 }
 
+function canManagePermission(interaction, permission) {
+  if (isGuildOwner(interaction)) return true;
+  return permission !== PERMISSIONS.MANAGE_PERMISSIONS && hasPermission(interaction, permission);
+}
+
 function grantPermission(guildId, userId, permission, actorId) {
-  if (!Object.hasOwn(PERMISSION_LABELS, permission)) throw new Error('Permission inconnue ou réservée à un administrateur');
+  if (!Object.hasOwn(PERMISSION_LABELS, permission)) throw new Error('Unknown or administrator-reserved permission.');
+  if (userId === actorId && permission === PERMISSIONS.MANAGE_PERMISSIONS) throw new Error('Cannot grant permission management to yourself.');
   database.grantPermission(guildId, userId, permission, actorId);
 }
 
+function grantRolePermission(guildId, roleId, permission, actorId) {
+  if (!Object.hasOwn(PERMISSION_LABELS, permission)) throw new Error('Unknown or administrator-reserved permission.');
+  database.grantRolePermission(guildId, roleId, permission, actorId);
+}
+
 function revokePermission(guildId, userId, permission, actorId) {
-  if (!Object.hasOwn(PERMISSION_LABELS, permission)) throw new Error('Permission inconnue ou réservée à un administrateur');
+  if (!Object.hasOwn(PERMISSION_LABELS, permission)) throw new Error('Unknown or administrator-reserved permission.');
   database.revokePermission(guildId, userId, permission, actorId);
 }
 
-module.exports = { PERMISSIONS, PERMISSION_LABELS, canOpenServerDashboard, grantPermission, hasPermission, isGuildOwner, isServerManager, revokePermission };
+function revokeRolePermission(guildId, roleId, permission, actorId) {
+  if (!Object.hasOwn(PERMISSION_LABELS, permission)) throw new Error('Unknown or administrator-reserved permission.');
+  database.revokeRolePermission(guildId, roleId, permission, actorId);
+}
+
+module.exports = { PERMISSIONS, PERMISSION_LABELS, canManagePermission, canOpenServerDashboard, grantPermission, grantRolePermission, hasPermission, isGuildOwner, revokePermission, revokeRolePermission };
