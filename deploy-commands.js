@@ -24,15 +24,28 @@ const commands = fs.readdirSync(commandsPath)
   .map(command => command.data.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-const route = process.env.GUILD_ID
-  ? Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID)
-  : Routes.applicationCommands(process.env.CLIENT_ID);
+const globalRoute = Routes.applicationCommands(process.env.CLIENT_ID);
 
 (async () => {
-  const deployed = await rest.put(route, { body: commands });
-  const scope = process.env.GUILD_ID ? `le serveur ${process.env.GUILD_ID}` : 'globalement';
-  console.log(`${deployed.length} commande(s) deployee(s) ${scope}.`);
+  if (process.env.GUILD_ID) {
+    const managedNames = new Set([...commands.map(command => command.name), 'timestamp', 'timezone']);
+    const currentGlobalCommands = await rest.get(globalRoute);
+    const retainedGlobalCommands = currentGlobalCommands.filter(command => !managedNames.has(command.name));
+
+    if (retainedGlobalCommands.length !== currentGlobalCommands.length) {
+      await rest.put(globalRoute, { body: retainedGlobalCommands });
+      console.log('Removed stale global Utils commands to avoid duplicate server registrations.');
+    }
+
+    const guildRoute = Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID);
+    const deployed = await rest.put(guildRoute, { body: commands });
+    console.log(`${deployed.length} command(s) registered for the configured development server.`);
+    return;
+  }
+
+  const deployed = await rest.put(globalRoute, { body: commands });
+  console.log(`${deployed.length} command(s) registered globally.`);
 })().catch(error => {
-  console.error('Echec du deploiement:', error.message);
+  console.error('Command deployment failed:', error.message);
   process.exitCode = 1;
 });

@@ -7,6 +7,7 @@ const database = require('./database');
 const { resolveZone } = require('./time');
 const { ZONES } = require('./components');
 const { PERMISSIONS, canOpenServerDashboard, grantPermission, hasPermission, revokePermission } = require('./permissions');
+const { acknowledgeCommand, acknowledgeComponent } = require('./interaction-responses');
 
 const selections = new Map();
 
@@ -19,12 +20,20 @@ function ephemeralError(message) { return { content: `❌ ${message}`, flags: Me
 async function handleInteraction(client, interaction) {
   if (interaction.isChatInputCommand()) {
     const command = client.commands.get(interaction.commandName);
-    if (command) return command.execute(interaction);
-    return interaction.reply(ephemeralError('Commande indisponible. Relance le déploiement des commandes.'));
+    const acknowledged = await acknowledgeCommand(interaction);
+    if (command) return command.execute(acknowledged);
+    return acknowledged.reply(ephemeralError('Commande indisponible. Relance le déploiement des commandes.'));
   }
   if (interaction.isModalSubmit()) {
     const result = await handleModal(interaction);
     return result || interaction.reply(ephemeralError('Formulaire expiré ou indisponible.'));
+  }
+  const opensModal = interaction.isButton() && /^(timestamp:(date|time)|convert:(date|time|source):)/.test(interaction.customId);
+  const selectsCustomZone = interaction.isStringSelectMenu()
+    && (interaction.customId === `timestamp:zone-select:${interaction.user.id}` || interaction.customId === `user:timezone-select:${interaction.user.id}`)
+    && interaction.values[0] === 'custom';
+  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu()) && !opensModal && !selectsCustomZone) {
+    interaction = await acknowledgeComponent(interaction);
   }
   if (!interaction.customId || owns(interaction.customId, interaction.user.id)) {
     if (interaction.isButton()) return handleButton(interaction);
@@ -145,7 +154,7 @@ async function handleSelect(interaction) {
   }
   if (area === 'user' && action === 'timezone-select') {
     const value = interaction.values[0];
-    if (value === 'custom') return interaction.showModal(require('./modals').timezone(database.getUser(interaction.user.id).timezone));
+    if (value === 'custom') return interaction.showModal(require('./modals').timezone('UTC'));
     if (!ZONES.some(([zone]) => zone === value) || !resolveZone(value)) return interaction.reply(ephemeralError('Fuseau horaire invalide.'));
     updateSettings(interaction.user.id, { timezone: value });
     return interaction.update(panels.userPayload(interaction, `🌍 Fuseau mis à jour : **${value}**.`));
@@ -177,8 +186,9 @@ async function handleModal(interaction) {
   if (interaction.customId === 'user:timezone:modal') {
     const value = interaction.fields.getTextInputValue('timezone').trim();
     if (!resolveZone(value)) return interaction.reply(ephemeralError('Fuseau inconnu. Utilise un nom IANA valide, comme `Europe/Paris` ou `America/New_York`, ou un décalage `UTC+01:00`.'));
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     updateSettings(interaction.user.id, { timezone: value });
-    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('🌍 Fuseau enregistré').setDescription(`Ton fuseau par défaut est maintenant **${value}**.`)], flags: MessageFlags.Ephemeral });
+    return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('🌍 Fuseau enregistré').setDescription(`Ton fuseau par défaut est maintenant **${value}**.`)] });
   }
 }
 

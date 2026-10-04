@@ -5,9 +5,8 @@ const panels = require('../panels');
 
 const drafts = new Map();
 
-function modal(field, label, title, userId) {
-  const settings = database.getUser(userId);
-  const placeholder = field === 'date' ? dateInputExample(settings) : field === 'time' ? timeInputExample(settings) : 'Europe/Paris';
+function modal(field, label, title) {
+  const placeholder = field === 'date' ? dateInputExample() : field === 'time' ? timeInputExample() : 'Europe/Paris';
   return new ModalBuilder().setCustomId(`convert:field:${field}`).setTitle(title).addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(field).setLabel(`${label} (ex: ${placeholder})`).setPlaceholder(placeholder).setStyle(TextInputStyle.Short).setMaxLength(100).setRequired(true)));
 }
 
@@ -21,7 +20,7 @@ async function execute(interaction) {
   drafts.set(interaction.user.id, draft);
 }
 async function openField(interaction, field) {
-  return interaction.showModal(modal(field, field === 'date' ? 'Date' : field === 'time' ? 'Heure' : 'Fuseau de départ', field === 'date' ? '📅 Définir la date' : field === 'time' ? '⏰ Définir l’heure' : '📍 Définir le fuseau de départ', interaction.user.id));
+  return interaction.showModal(modal(field, field === 'date' ? 'Date' : field === 'time' ? 'Heure' : 'Fuseau de départ', field === 'date' ? '📅 Définir la date' : field === 'time' ? '⏰ Définir l’heure' : '📍 Définir le fuseau de départ'));
 }
 async function handleModal(interaction) {
   const field = interaction.customId.split(':')[2];

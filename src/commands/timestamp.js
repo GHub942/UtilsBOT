@@ -5,9 +5,8 @@ const panels = require('../panels');
 
 const drafts = new Map();
 
-function modal(field, label, title, userId) {
-  const settings = database.getUser(userId);
-  const placeholder = field === 'date' ? dateInputExample(settings) : timeInputExample(settings);
+function modal(field, label, title) {
+  const placeholder = field === 'date' ? dateInputExample() : timeInputExample();
   return new ModalBuilder().setCustomId(`timestamp:field:${field}`).setTitle(title).addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(field).setLabel(`${label} (ex: ${placeholder})`).setPlaceholder(placeholder).setStyle(TextInputStyle.Short).setMaxLength(100).setRequired(true)));
 }
 
@@ -25,7 +24,7 @@ async function execute(interaction) {
 }
 
 async function openField(interaction, field) {
-  return interaction.showModal(modal(field, field === 'date' ? 'Date' : 'Heure', field === 'date' ? '📅 Définir la date' : '⏰ Définir l’heure', interaction.user.id));
+  return interaction.showModal(modal(field, field === 'date' ? 'Date' : 'Heure', field === 'date' ? '📅 Définir la date' : '⏰ Définir l’heure'));
 }
 
 async function openZoneField(interaction) {

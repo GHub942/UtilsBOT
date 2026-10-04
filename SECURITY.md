@@ -13,6 +13,7 @@ Include the affected version, impact, reproduction steps, and any suggested miti
 ## Deployment security
 
 - Keep `.env`, SQLite databases, exports, and backups out of source control and restrict filesystem access to them.
+- Run only one bot process against a given data directory; the bot enforces this with a process lock.
 - Use a dedicated bot account and grant only the Discord permissions it needs.
 - Give Utils permissions only to trusted members. Permission management and server reset are sensitive administrative capabilities.
 - Store exported data securely and delete it when it is no longer needed.

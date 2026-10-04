@@ -27,6 +27,7 @@ test('drops legacy whitelist data and retains explicit permission records', () =
     assert.deepEqual(guild.permissions.map(row => row.userId), ['authorized-user']);
     assert.equal(database.hasPermission(guildId, 'authorized-user', 'view_stats'), true);
     assert.equal(database.hasPermission(guildId, 'legacy-user', 'view_stats'), false);
+    assert.equal(database.getStats(guildId).audit, 0);
 
     const migratedDatabase = new DatabaseSync(dbPath);
     assert.equal(migratedDatabase.prepare('PRAGMA user_version').get().user_version, 1);

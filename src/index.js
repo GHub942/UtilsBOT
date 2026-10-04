@@ -3,6 +3,7 @@ const path = require('path');
 const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
 const { handleInteraction } = require('./interactions');
 const database = require('./database');
+const { acquireProcessLock } = require('./process-lock');
 
 try {
   process.loadEnvFile(path.join(__dirname, '..', '.env'));
@@ -19,6 +20,15 @@ if (!process.env.DISCORD_TOKEN) {
   console.error('DISCORD_TOKEN manquant dans le fichier .env.');
   process.exit(1);
 }
+
+let releaseProcessLock;
+try {
+  releaseProcessLock = acquireProcessLock(path.join(__dirname, '..', 'data', 'bot.pid'));
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+process.once('exit', releaseProcessLock);
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.commands = new Collection();
@@ -41,6 +51,10 @@ client.on(Events.InteractionCreate, interaction => {
       : 'unknown';
   logger.debug('Interaction reçue', interactionType);
   handleInteraction(client, interaction).catch(error => {
+    if (error.code === 10062 || error.code === 40060) {
+      logger.warn('Interaction expirée ou déjà acquittée', `${interactionType} (${error.code})`);
+      return;
+    }
     logger.error('Erreur interaction', error.stack || error.message);
     if (interaction.isRepliable()) {
       const payload = { content: 'Une erreur est survenue. Consulte les logs du bot.', flags: MessageFlags.Ephemeral };

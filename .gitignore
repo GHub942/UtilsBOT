@@ -67,6 +67,8 @@ web_modules/
 
 # dotenv environment variable files
 .env
+data/
+data/bot.pid
 .env.*
 !.env.example
 

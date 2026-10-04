@@ -18,15 +18,21 @@ function openDatabase(scope, id) {
   const directory = path.join(DATA_ROOT, scope === 'guild' ? 'guilds' : 'users', id);
   fs.mkdirSync(directory, { recursive: true });
   const database = new DatabaseSync(path.join(directory, 'data.sqlite'));
-  database.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-  const schemaVersion = database.prepare('PRAGMA user_version').get().user_version;
-  if (scope === 'guild') {
-    database.exec('CREATE TABLE IF NOT EXISTS permissions (user_id TEXT NOT NULL, permission TEXT NOT NULL, granted_by TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, permission)); CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, actor_id TEXT NOT NULL, details TEXT NOT NULL DEFAULT \'\', created_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
-    if (schemaVersion < 1) {
-      database.exec('DROP TABLE IF EXISTS whitelist; PRAGMA user_version = 1;');
+  try {
+    database.exec('PRAGMA busy_timeout = 2000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+    database.exec('BEGIN IMMEDIATE;');
+    if (scope === 'guild') {
+      const schemaVersion = database.prepare('PRAGMA user_version').get().user_version;
+      database.exec('CREATE TABLE IF NOT EXISTS permissions (user_id TEXT NOT NULL, permission TEXT NOT NULL, granted_by TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, permission)); CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, actor_id TEXT NOT NULL, details TEXT NOT NULL DEFAULT \'\', created_at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+      if (schemaVersion < 1) database.exec('DROP TABLE IF EXISTS whitelist; PRAGMA user_version = 1;');
+    } else {
+      database.exec('CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
     }
-  } else {
-    database.exec('CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+    database.exec('COMMIT;');
+  } catch (error) {
+    if (database.isTransaction) database.exec('ROLLBACK;');
+    database.close();
+    throw error;
   }
   cache.set(id, database);
   return database;

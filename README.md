@@ -16,9 +16,9 @@ UtilsBOT is a Discord utility bot for timestamp creation and time-zone conversio
 4. Register the slash command with `npm run deploy`.
 5. Start the bot with `npm start`.
 
-The global command registration can take time to appear in Discord. Setting `GUILD_ID` deploys to that server for development.
+The global command registration can take time to appear in Discord. Setting `GUILD_ID` deploys to that server for development and removes the bot's managed global command copies, avoiding duplicate global and server-specific entries. Other global commands registered for the application are preserved. When changing back to global deployment, unset `GUILD_ID` and run `npm run deploy` again.
 
-The `start.bat` and `start.sh` launchers perform dependency installation when needed, deploy the application command, and ask whether to enable DEBUG logs for that run. They restart the bot after a crash, up to five times. The launchers create `.env` from `.env.example` if it does not exist; configure the file and run the launcher again.
+The `start.bat` and `start.sh` launchers perform dependency installation when needed, deploy the application command, and ask whether to enable DEBUG logs for that run. They restart the bot after a crash, up to five times. The bot uses `data/bot.pid` to prevent multiple instances from using the same SQLite databases; stop an existing instance before starting another. The launchers create `.env` from `.env.example` if it does not exist; configure the file and run the launcher again.
 
 Environment variables:
 
