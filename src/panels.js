@@ -65,6 +65,7 @@ function managementPayload(interaction) {
 function presenceSettingsPayload(interaction, configuration, notice = '') {
   const id = owner(interaction);
   const language = database.getUser(id).language;
+  if (configuration.publishPaused && !notice) notice = t(language, 'presence_monitor_paused');
   const accessOptions = ['permission', 'owner', 'nobody', 'everyone'].map(mode => ({
     label: t(language, `presence_access_${mode}`),
     value: mode,

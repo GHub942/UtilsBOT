@@ -201,6 +201,17 @@ function persistOnlineSince(guild, configuration, now = Date.now()) {
   return result.payload;
 }
 
+function pauseOnMissingPermissions(guildId, error, targetLogger = logger) {
+  if (error.code !== 50013 && error.code !== 'PRESENCE_CHANNEL_MISSING_PERMISSIONS') return false;
+  const configuration = getConfiguration(guildId);
+  if (!configuration.publishPaused) {
+    configuration.publishPaused = true;
+    database.setGuildSetting(guildId, SETTING_KEY, configuration);
+    targetLogger.warn(`Presence monitor publishing paused for guild ${guildId}: Discord denied channel permissions. Restore View Channel, Send Messages, and Embed Links, then save the monitor settings to resume.`);
+  }
+  return true;
+}
+
 function recordPresenceUpdate(guild, presence) {
   if (!guild || !presence?.userId) return;
   const configuration = getConfiguration(guild.id);
@@ -216,7 +227,7 @@ function recordPresenceUpdate(guild, presence) {
 
 async function updatePublishedMessage(client, guildId) {
   const configuration = getConfiguration(guildId);
-  if (!configuration.channelId || !configuration.userIds?.length) return null;
+  if (configuration.publishPaused || !configuration.channelId || !configuration.userIds?.length) return null;
   const guild = client.guilds.cache.get(guildId);
   if (!guild) return null;
   const payload = persistOnlineSince(guild, configuration);
@@ -225,6 +236,7 @@ async function updatePublishedMessage(client, guildId) {
   if (!channel?.isTextBased() || typeof channel.send !== 'function') {
     throw new Error(`Presence monitor channel ${configuration.channelId} is not a sendable text channel.`);
   }
+  validateChannelPermissions(channel, guild);
   let message;
   if (configuration.messageId) {
     try {
@@ -262,6 +274,7 @@ async function configure(client, guildId, updates) {
       userIds,
       accessMode,
       language: updates.language === 'en' ? 'en' : 'fr',
+      publishPaused: false,
       onlineSince: Object.fromEntries(userIds.filter(id => Number.isInteger(existing.onlineSince?.[id])).map(id => [id, existing.onlineSince[id]]))
     };
     database.setGuildSetting(guildId, SETTING_KEY, configuration);
@@ -269,7 +282,10 @@ async function configure(client, guildId, updates) {
     try {
       message = await updatePublishedMessage(client, guildId);
     } catch (error) {
-      database.setGuildSetting(guildId, SETTING_KEY, existing);
+      const restoredConfiguration = { ...existing };
+      if ((error.code === 50013 || error.code === 'PRESENCE_CHANNEL_MISSING_PERMISSIONS')
+        && existing.channelId === channelId) restoredConfiguration.publishPaused = true;
+      database.setGuildSetting(guildId, SETTING_KEY, restoredConfiguration);
       throw error;
     }
     if (existing.channelId && existing.channelId !== channelId && existing.messageId) {
@@ -353,7 +369,11 @@ function start(client, logger) {
   setAvailable(true);
   const publishConfigured = () => {
     for (const [guildId] of client.guilds.cache) {
-      updatePublishedMessage(client, guildId).catch(error => logger.error('Could not update presence monitor', error.stack || error.message));
+      updatePublishedMessage(client, guildId).catch(error => {
+        if (!pauseOnMissingPermissions(guildId, error, logger)) {
+          logger.error('Could not update presence monitor', error.stack || error.message);
+        }
+      });
     }
   };
   const delay = REFRESH_INTERVAL_MS - (Date.now() % REFRESH_INTERVAL_MS);
@@ -413,5 +433,6 @@ module.exports = {
   setAvailable,
   scheduleRefreshButtonEnable,
   takeRefreshCooldown,
-  updatePublishedMessage
+  updatePublishedMessage,
+  pauseOnMissingPermissions
 };
