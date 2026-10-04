@@ -29,6 +29,8 @@ function getConfiguration(guildId) {
 
 function statusDetails(guild, userId, configuration, now) {
   const presence = guild.presences.cache.get(userId);
+  const member = guild.members?.cache?.get(userId);
+  const user = member?.user || presence?.user || guild.client?.users?.cache?.get(userId);
   const status = ['online', 'idle', 'dnd'].includes(presence?.status) ? presence.status : 'offline';
   const onlineSince = { ...(configuration.onlineSince || {}) };
   if (status === 'offline') delete onlineSince[userId];
@@ -39,7 +41,12 @@ function statusDetails(guild, userId, configuration, now) {
     .filter(Boolean)
     .join(', ')
     .slice(0, 400);
-  return { status, activity, onlineSince };
+  return {
+    status,
+    activity,
+    displayName: member?.displayName || user?.globalName || user?.username,
+    onlineSince
+  };
 }
 
 function makePayload(guild, configuration, now = Date.now()) {
@@ -54,9 +61,9 @@ function makePayload(guild, configuration, now = Date.now()) {
     const activity = state.activity || t(language, 'presence_no_activity');
     const onlineDuration = state.status === 'offline'
       ? t(language, 'presence_not_online')
-      : `${t(language, 'presence_online_since')} <t:${state.onlineSince[userId]}:R>`;
+      : `${t(language, 'presence_first_seen_online')} <t:${state.onlineSince[userId]}:R>`;
     return {
-      name: `<@${userId}>`,
+      name: state.displayName || t(language, 'presence_unknown_member'),
       value: `${emoji} **${statusText}**\n${t(language, 'presence_activity')}: ${activity}\n${onlineDuration}`,
       inline: false
     };

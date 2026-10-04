@@ -20,6 +20,13 @@ test('builds one embed for at most five members with status, activity, and onlin
   };
   const guild = {
     id: guildId,
+    members: {
+      cache: new Map([
+        [userIds[0], { displayName: 'First member' }],
+        [userIds[1], { displayName: 'Second member' }],
+        [userIds[2], { displayName: 'Third member' }]
+      ])
+    },
     presences: {
       cache: new Map([
         [userIds[0], { status: 'online', activities: [{ name: 'Playing a game' }] }],
@@ -34,11 +41,15 @@ test('builds one embed for at most five members with status, activity, and onlin
     const embed = result.payload.embeds[0].toJSON();
     assert.equal(embed.fields.length, 5);
     assert.match(embed.title, /Server presence/);
-    assert.match(embed.fields[0].value, /Online since <t:1000:R>/);
+    assert.equal(embed.fields[0].name, 'First member');
+    assert.match(embed.fields[0].value, /First observed online <t:1000:R>/);
     assert.match(embed.fields[0].value, /Playing a game/);
     assert.match(embed.fields[1].value, /Idle/);
     assert.match(embed.fields[2].value, /Do Not Disturb/);
     assert.match(embed.fields[3].value, /Offline/);
+    assert.equal(embed.fields[3].name, 'Unknown member');
+    assert.ok(embed.fields.every(field => !field.name.includes('<@')));
+    assert.match(embed.description, /duration starts when Utils first observes a member online/);
     assert.deepEqual(result.onlineSince, {
       [userIds[0]]: 1_000,
       [userIds[1]]: 2_000,
