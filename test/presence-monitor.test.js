@@ -227,6 +227,50 @@ test('publishes one persistent message and edits it on subsequent refreshes', as
       onlineSince: {},
       language: 'en'
     });
+
+    test('preserves the saved monitor when the selected channel lacks bot permissions', async () => {
+      const guildId = `presence-permissions-${randomUUID()}`;
+      const previous = {
+        channelId: 'old-channel',
+        userIds: ['old-member'],
+        accessMode: 'owner',
+        messageId: 'old-message',
+        onlineSince: { 'old-member': 123 },
+        language: 'en'
+      };
+      let sendCount = 0;
+      const deniedChannel = {
+        isTextBased: () => true,
+        send: async () => {
+          sendCount += 1;
+        },
+        permissionsFor: () => ({ missing: () => [...presenceMonitor.REQUIRED_CHANNEL_PERMISSIONS] })
+      };
+      const guild = {
+        id: guildId,
+        members: { me: { id: 'bot-user' } },
+        channels: { cache: new Map([['new-channel', deniedChannel]]) }
+      };
+      const client = { guilds: { cache: new Map([[guildId, guild]]) } };
+
+      try {
+        database.setGuildSetting(guildId, presenceMonitor.SETTING_KEY, previous);
+        await assert.rejects(
+          presenceMonitor.configure(client, guildId, {
+            channelId: 'new-channel',
+            userIds: ['new-member'],
+            accessMode: 'everyone',
+            language: 'en'
+          }),
+          error => error.code === 'PRESENCE_CHANNEL_MISSING_PERMISSIONS'
+        );
+        assert.deepEqual(presenceMonitor.getConfiguration(guildId), previous);
+        assert.equal(sendCount, 0);
+      } finally {
+        database.closeAll();
+        fs.rmSync(path.join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
+      }
+    });
     await presenceMonitor.updatePublishedMessage(client, guildId);
     assert.equal(sent.length, 1);
     assert.equal(presenceMonitor.getConfiguration(guildId).messageId, 'presence-message');

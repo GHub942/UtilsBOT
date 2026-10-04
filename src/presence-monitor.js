@@ -1,4 +1,4 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, PermissionFlagsBits } = require('discord.js');
 const database = require('./database');
 const { t } = require('./i18n');
 const { PERMISSIONS, hasPermission, isGuildOwner } = require('./permissions');
@@ -13,6 +13,22 @@ let presenceAvailable = false;
 const guildRefreshes = new Map();
 const userRefreshes = new Map();
 const refreshEnableTimers = new Map();
+const REQUIRED_CHANNEL_PERMISSIONS = [
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessages,
+  PermissionFlagsBits.EmbedLinks
+];
+
+function validateChannelPermissions(channel, guild) {
+  if (typeof channel.permissionsFor !== 'function') return;
+  const botMember = guild.members?.me;
+  const permissions = botMember && channel.permissionsFor(botMember);
+  if (!permissions || permissions.missing(REQUIRED_CHANNEL_PERMISSIONS).length) {
+    const error = new Error('The bot is missing permissions required to publish the presence monitor.');
+    error.code = 'PRESENCE_CHANNEL_MISSING_PERMISSIONS';
+    throw error;
+  }
+}
 
 function isAvailable() {
   return presenceAvailable;
@@ -233,19 +249,13 @@ async function configure(client, guildId, updates) {
   const userIds = [...new Set((updates.userIds || []).filter(id => typeof id === 'string'))].slice(0, 5);
   const accessMode = VALID_ACCESS_MODES.has(updates.accessMode) ? updates.accessMode : 'owner';
   if (channelId && userIds.length) {
-    if (existing.channelId && existing.channelId !== channelId && existing.messageId) {
-      const guild = client.guilds.cache.get(guildId);
-      const oldChannel = guild?.channels.cache.get(existing.channelId)
-        || await guild?.channels.fetch(existing.channelId);
-      if (oldChannel?.messages) {
-        try {
-          const oldMessage = await oldChannel.messages.fetch(existing.messageId);
-          await oldMessage.delete();
-        } catch (error) {
-          if (error.code !== 10008) throw error;
-        }
-      }
+    const guild = client.guilds.cache.get(guildId);
+    const channel = guild?.channels.cache.get(channelId)
+      || await guild?.channels.fetch(channelId);
+    if (!guild || !channel?.isTextBased() || typeof channel.send !== 'function') {
+      throw new Error(`Presence monitor channel ${channelId} is not a sendable text channel.`);
     }
+    validateChannelPermissions(channel, guild);
     const configuration = {
       ...existing,
       channelId,
@@ -255,7 +265,28 @@ async function configure(client, guildId, updates) {
       onlineSince: Object.fromEntries(userIds.filter(id => Number.isInteger(existing.onlineSince?.[id])).map(id => [id, existing.onlineSince[id]]))
     };
     database.setGuildSetting(guildId, SETTING_KEY, configuration);
-    return updatePublishedMessage(client, guildId);
+    let message;
+    try {
+      message = await updatePublishedMessage(client, guildId);
+    } catch (error) {
+      database.setGuildSetting(guildId, SETTING_KEY, existing);
+      throw error;
+    }
+    if (existing.channelId && existing.channelId !== channelId && existing.messageId) {
+      const oldChannel = guild.channels.cache.get(existing.channelId)
+        || await guild.channels.fetch(existing.channelId);
+      if (oldChannel?.messages) {
+        try {
+          const oldMessage = await oldChannel.messages.fetch(existing.messageId);
+          await oldMessage.delete();
+        } catch (error) {
+          if (error.code === 50013) {
+            logger.warn(`Could not remove the previous presence monitor message from channel ${existing.channelId} in guild ${guildId}: missing channel permissions.`);
+          } else if (error.code !== 10008) throw error;
+        }
+      }
+    }
+    return message;
   }
 
   if (existing.channelId && existing.messageId) {
@@ -368,6 +399,7 @@ module.exports = {
   REFRESH_USER_COOLDOWN_MS,
   SETTING_KEY,
   VALID_ACCESS_MODES,
+  REQUIRED_CHANNEL_PERMISSIONS,
   canRefresh,
   configure,
   getConfiguration,

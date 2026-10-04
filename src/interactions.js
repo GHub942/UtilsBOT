@@ -397,7 +397,17 @@ async function handleButton(interaction) {
         accessMode: state.accessMode || 'owner',
         language
       };
-      await presenceMonitor.configure(interaction.client, interaction.guildId, configuration);
+      try {
+        await presenceMonitor.configure(interaction.client, interaction.guildId, configuration);
+      } catch (error) {
+        if (error.code !== 'PRESENCE_CHANNEL_MISSING_PERMISSIONS' && error.code !== 50013) throw error;
+        logger.warn(`Could not publish the presence monitor in channel ${state.channelId} of guild ${interaction.guildId}: missing channel permissions.`);
+        return interaction.update(panels.presenceSettingsPayload(
+          interaction,
+          { ...presenceMonitor.getConfiguration(interaction.guildId), ...state },
+          t(language, 'presence_channel_permissions')
+        ));
+      }
       return interaction.update(panels.presenceSettingsPayload(interaction, presenceMonitor.getConfiguration(interaction.guildId), t(language, 'presence_saved')));
     }
     if (action === 'disable') {
