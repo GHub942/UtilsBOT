@@ -18,7 +18,9 @@ Include the affected version, impact, reproduction steps, and any suggested miti
 - Only the server owner has implicit full access. Discord's `Manage Server` permission does not grant Utils access.
 - Utils permissions can be assigned to individual members or roles. Assign role permissions carefully because every current and future member of the role inherits that access.
 - Give Utils permissions only to trusted members. Only the owner can delegate permission management; delegated managers cannot grant permissions they do not hold or delegate the manager role.
+- Role grants apply to every member whose interaction payload includes that role. Role IDs are resolved from both discord.js cached members and Discord's raw interaction-member role arrays.
 - Server reset requires a confirmation form with the exact uppercase phrase `RESET`. Other destructive data actions use a second confirmation that expires after five seconds.
+- Interactions are rate limited per user; operational-status refreshes use a separate three-second cooldown.
 - Store exported data securely and delete it when it is no longer needed.
 - Set `LOG_LEVEL` to `debug` only when diagnosing an issue; review logs before sharing them.
 - Rotate a bot token immediately if it is exposed, and update the deployment environment.

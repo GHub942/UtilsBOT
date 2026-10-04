@@ -68,18 +68,33 @@ test('requires each non-owner Utils permission explicitly and allows granting th
 });
 
 test('recognizes explicitly assigned permissions through member roles', () => {
-  const interaction = {
-    guild: { ownerId: 'owner' },
-    guildId: 'guild',
-    user: { id: 'member' },
-    member: { roles: { cache: new Map([['role-a', {}], ['role-b', {}]]) } }
-  };
   const storedHasPermission = database.hasPermission;
-  database.hasPermission = (_guildId, _userId, permission, roles) => permission === PERMISSIONS.VIEW_STATS && roles.includes('role-b');
+  const seenRoles = [];
+  database.hasPermission = (_guildId, _userId, permission, roles) => {
+    seenRoles.push(roles);
+    return permission === PERMISSIONS.VIEW_STATS && roles.includes('role-b');
+  };
 
   try {
-    assert.equal(hasPermission(interaction, PERMISSIONS.VIEW_STATS), true);
-    assert.equal(hasPermission(interaction, PERMISSIONS.EXPORT_DATA), false);
+    for (const roles of [
+      { cache: new Map([['role-a', {}], ['role-b', {}]]) },
+      ['role-a', 'role-b']
+    ]) {
+      const interaction = {
+        guild: { ownerId: 'owner' },
+        guildId: 'guild',
+        user: { id: 'member' },
+        member: { roles }
+      };
+      assert.equal(hasPermission(interaction, PERMISSIONS.VIEW_STATS), true);
+      assert.equal(hasPermission(interaction, PERMISSIONS.EXPORT_DATA), false);
+    }
+    assert.deepEqual(seenRoles.filter(roles => roles.length), [
+      ['role-a', 'role-b'],
+      ['role-a', 'role-b'],
+      ['role-a', 'role-b'],
+      ['role-a', 'role-b']
+    ]);
   } finally {
     database.hasPermission = storedHasPermission;
   }

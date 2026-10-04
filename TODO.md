@@ -17,6 +17,8 @@ This is the follow-up backlog; it is not a guarantee that an item is scheduled.
 - [x] Add role-based Utils permission assignments with an explicit SQLite schema migration.
 - [x] Require the exact uppercase phrase `RESET` in a confirmation form before resetting server data.
 - [x] Display operational uptime as a Discord-relative timestamp and allow the status panel to be refreshed.
+- [x] Apply per-user cooldowns to interactions and a longer cooldown to operational-status refreshes.
+- [x] Render system responses consistently in embeds and return deletion cancellations to their preceding screen.
 - [x] Add CI checks for supported Node.js versions and automated dependency update proposals.
 
 ## T3 : Time tools

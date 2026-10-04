@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
+const { Client, Collection, EmbedBuilder, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
 const { handleInteraction } = require('./interactions');
 const database = require('./database');
 const { t } = require('./i18n');
@@ -59,7 +59,7 @@ client.on(Events.InteractionCreate, interaction => {
     logger.error('Erreur interaction', error.stack || error.message);
     if (interaction.isRepliable()) {
       const language = interaction.locale?.startsWith('fr') ? 'fr' : 'en';
-      const payload = { content: t(language, 'generic_error'), flags: MessageFlags.Ephemeral };
+      const payload = { embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(t(language, 'generic_error'))], flags: MessageFlags.Ephemeral };
       const response = interaction.replied || interaction.deferred ? interaction.followUp(payload) : interaction.reply(payload);
       response.catch(responseError => logger.warn('Could not report the interaction error to the user', responseError.stack || responseError.message));
     }

@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const database = require('../src/database');
 const { PERMISSIONS } = require('../src/permissions');
 const timestamp = require('../src/commands/timestamp');
-const { beginDeletionConfirmation, cancelLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage } = require('../src/interactions');
+const { beginDeletionConfirmation, cancelLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, healthRefreshCooldowns, interactionCooldowns, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage } = require('../src/interactions');
 
 test('denies server statistics access without permission and responds ephemerally', async () => {
   const userId = `interaction-test-${randomUUID()}`;
@@ -32,7 +32,7 @@ test('denies server statistics access without permission and responds ephemerall
   try {
     await handleInteraction({ commands: new Map() }, interaction);
     assert.deepEqual(calls.map(call => Array.isArray(call) ? call[0] : call), ['deferUpdate', 'followUp']);
-    assert.match(calls[1][1].content, /Permission statistiques requise/);
+    assert.match(calls[1][1].embeds[0].data.description, /Permission statistiques requise/);
   } finally {
     database.hasPermission = hasPermission;
   }
@@ -136,8 +136,8 @@ test('requires a second deletion confirmation within five seconds and includes a
     await beginDeletionConfirmation(interaction, 'preferences');
     assert.equal(scheduled.milliseconds, 5_000);
     const prompt = calls.at(-1)[1];
-    assert.deepEqual(prompt.embeds, []);
-    assert.match(prompt.content, /<t:\d+:R>/);
+    assert.equal(prompt.embeds.length, 1);
+    assert.match(prompt.embeds[0].data.description, /<t:\d+:R>/);
     const customId = prompt.components[0].components[0].data.custom_id;
     await finishDeletionConfirmation(interaction, 'confirm', customId.split(':')[2]);
     assert.equal(deleted, true);
@@ -149,6 +149,114 @@ test('requires a second deletion confirmation within five seconds and includes a
     pendingDeletions.delete(`dm:${userId}`);
     originalDeletePreferences(userId);
     database.closeAll();
+  }
+});
+
+test('returns to the relevant confirmation screen when a deletion is cancelled', async () => {
+  const userId = `delete-cancel-${randomUUID()}`;
+  const managedUserId = `managed-user-${randomUUID()}`;
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  const scheduled = [];
+  const responses = [];
+  global.setTimeout = (callback, milliseconds) => {
+    const timer = { callback, milliseconds, unref() {} };
+    scheduled.push(timer);
+    return timer;
+  };
+  global.clearTimeout = () => {};
+  const interaction = {
+    user: { id: userId },
+    guildId: `delete-cancel-guild-${randomUUID()}`,
+    update: async payload => responses.push(payload)
+  };
+
+  try {
+    database.setUserPreferences(userId, { language: 'en' });
+    await beginDeletionConfirmation(interaction, 'preferences');
+    const preferenceNonce = responses.at(-1).components[0].components[0].data.custom_id.split(':')[2];
+    await finishDeletionConfirmation(interaction, 'cancel', preferenceNonce);
+    assert.equal(responses.at(-1).embeds.length, 1);
+    assert.ok(responses.at(-1).components.flatMap(row => row.components).some(component => component.data.custom_id === `user:delete-preferences-confirm:${userId}`));
+
+    await beginDeletionConfirmation(interaction, 'managed-user-data', managedUserId);
+    const userNonce = responses.at(-1).components[0].components[0].data.custom_id.split(':')[2];
+    await finishDeletionConfirmation(interaction, 'cancel', userNonce);
+    assert.ok(responses.at(-1).components.flatMap(row => row.components).some(component => component.data.custom_id === `data:delete-confirm:${userId}`));
+    assert.equal(responses.at(-1).embeds.length, 1);
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+    pendingDeletions.delete(`${interaction.guildId}:${userId}`);
+    database.deleteUserPreferences(userId);
+    database.closeAll();
+  }
+});
+
+test('rate limits all interactions and applies a separate three-second operational refresh cooldown', async () => {
+  const userId = `cooldown-user-${randomUUID()}`;
+  const guildId = `cooldown-guild-${randomUUID()}`;
+  const originalNow = Date.now;
+  let now = 100_000;
+  Date.now = () => now;
+  const replies = [];
+  const makeUnknown = () => ({
+    customId: `unknown:${userId}`,
+    user: { id: userId },
+    isChatInputCommand: () => false,
+    isModalSubmit: () => false,
+    isButton: () => false,
+    isStringSelectMenu: () => false,
+    isUserSelectMenu: () => false,
+    isRepliable: () => true,
+    reply: async payload => replies.push(payload)
+  });
+  const makeHealthRefresh = () => ({
+    customId: `manage:health-refresh:${userId}`,
+    user: { id: userId },
+    guildId,
+    guild: { ownerId: userId },
+    client: {
+      ws: { ping: 10, shards: new Map([[0, {}]]) },
+      guilds: { cache: new Map([['guild', { memberCount: 1 }]]) },
+      commands: new Map(),
+      isReady: () => true
+    },
+    isChatInputCommand: () => false,
+    isModalSubmit: () => false,
+    isButton: () => true,
+    isStringSelectMenu: () => false,
+    isUserSelectMenu: () => false,
+    isRepliable: () => true,
+    deferUpdate: async () => {},
+    reply: async payload => replies.push(payload),
+    followUp: async payload => replies.push(payload),
+    editReply: async payload => replies.push(payload)
+  });
+
+  try {
+    database.setUserPreferences(userId, { language: 'en' });
+    await handleInteraction({ commands: new Map() }, makeUnknown());
+    await handleInteraction({ commands: new Map() }, makeUnknown());
+    assert.match(replies.at(-1).embeds[0].data.title, /Please wait/);
+    now += 1_000;
+    await handleInteraction({ commands: new Map() }, makeUnknown());
+    assert.equal(interactionCooldowns.has(userId), true);
+
+    now += 1_000;
+    await handleInteraction({ commands: new Map() }, makeHealthRefresh());
+    now += 1_000;
+    await handleInteraction({ commands: new Map() }, makeHealthRefresh());
+    assert.match(replies.at(-1).embeds[0].data.title, /Please wait/);
+    now += 2_000;
+    await handleInteraction({ commands: new Map() }, makeHealthRefresh());
+    assert.ok(replies.at(-1).embeds[0].data.fields.some(field => field.name.endsWith(require('../src/i18n').MESSAGES.en.health_uptime)));
+  } finally {
+    Date.now = originalNow;
+    interactionCooldowns.delete(userId);
+    healthRefreshCooldowns.delete(userId);
+    database.closeAll();
+    require('node:fs').rmSync(require('node:path').join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
   }
 });
 
@@ -177,7 +285,7 @@ test('expires destructive confirmations after five seconds without deleting data
     scheduled.callback();
     await Promise.resolve();
     assert.equal(pendingDeletions.has(`dm:${userId}`), false);
-    assert.match(edits[0].content, /<t:\d+:R>/);
+    assert.match(edits[0].embeds[0].data.description, /<t:\d+:R>/);
     assert.equal(edits[0].components.length, 0);
   } finally {
     global.setTimeout = originalSetTimeout;
@@ -195,6 +303,8 @@ test('rechecks delegated delete permission when the final confirmation is submit
   const originalClearTimeout = global.clearTimeout;
   const originalHasPermission = database.hasPermission;
   const originalDeleteUserData = database.deleteUserData;
+  const originalNow = Date.now;
+  let now = originalNow();
   let scheduled;
   let deleted = false;
   const responses = [];
@@ -209,6 +319,7 @@ test('rechecks delegated delete permission when the final confirmation is submit
     return scheduled;
   };
   global.clearTimeout = () => {};
+  Date.now = () => now;
 
   try {
     database.setUserPreferences(userId, { language: 'en' });
@@ -218,11 +329,12 @@ test('rechecks delegated delete permission when the final confirmation is submit
     const customId = responses.at(-1).components[0].components[0].data.custom_id;
     await finishDeletionConfirmation(interaction, 'confirm', customId.split(':')[2]);
     assert.equal(deleted, false);
-    assert.match(responses.at(-1).content, /permission/i);
+    assert.match(responses.at(-1).embeds[0].data.description, /permission/i);
     assert.equal(pendingDeletions.has(`${guildId}:${userId}`), false);
   } finally {
     global.setTimeout = originalSetTimeout;
     global.clearTimeout = originalClearTimeout;
+    Date.now = originalNow;
     database.hasPermission = originalHasPermission;
     database.deleteUserData = originalDeleteUserData;
     pendingDeletions.delete(`${guildId}:${userId}`);
@@ -235,6 +347,8 @@ test('accepts multi-value journal filters and resets to the first filtered page'
   const userId = `journal-filter-${randomUUID()}`;
   const guildId = `journal-guild-${randomUUID()}`;
   const originalHasPermission = database.hasPermission;
+  const originalNow = Date.now;
+  let now = originalNow();
   const responses = [];
   const interaction = {
     customId: `journal:actions:${userId}`,
@@ -254,6 +368,7 @@ test('accepts multi-value journal filters and resets to the first filtered page'
 
   try {
     database.hasPermission = () => true;
+    Date.now = () => now;
     await handleInteraction({ commands: new Map() }, interaction);
     assert.deepEqual(journalFilters.get(`${guildId}:${userId}`), {
       users: [],
@@ -263,6 +378,7 @@ test('accepts multi-value journal filters and resets to the first filtered page'
 
     interaction.customId = `journal:users:${userId}`;
     interaction.values = ['member-a', 'member-b'];
+    now += 1_000;
     await handleInteraction({ commands: new Map() }, interaction);
     assert.deepEqual(journalFilters.get(`${guildId}:${userId}`), {
       users: ['member-a', 'member-b'],
@@ -270,6 +386,7 @@ test('accepts multi-value journal filters and resets to the first filtered page'
     });
     assert.match(responses[1].embeds[0].data.description, /<@member-a>, <@member-b>/);
   } finally {
+    Date.now = originalNow;
     database.hasPermission = originalHasPermission;
     journalFilters.delete(`${guildId}:${userId}`);
     database.closeAll();
@@ -280,6 +397,8 @@ test('routes a role select through permission grant and revoke', async () => {
   const userId = `role-manager-${randomUUID()}`;
   const guildId = `role-manager-guild-${randomUUID()}`;
   const roleId = `managed-role-${randomUUID()}`;
+  const originalNow = Date.now;
+  let now = originalNow();
   const calls = [];
   const makeInteraction = (customId, values = []) => ({
     customId,
@@ -300,15 +419,20 @@ test('routes a role select through permission grant and revoke', async () => {
 
   try {
     database.setUserPreferences(userId, { language: 'en' });
+    Date.now = () => now;
     await handleInteraction({ commands: new Map() }, makeInteraction(`perm:role:${userId}`, [roleId]));
+    now += 1_000;
     await handleInteraction({ commands: new Map() }, makeInteraction(`perm:type:${userId}`, [PERMISSIONS.VIEW_STATS]));
+    now += 1_000;
     await handleInteraction({ commands: new Map() }, makeInteraction(`perm:enable:${userId}`));
     assert.equal(database.hasPermission(guildId, 'member-with-role', PERMISSIONS.VIEW_STATS, [roleId]), true);
     assert.match(calls.at(-1).embeds[0].data.fields[0].value, new RegExp(`<@&${roleId}>`));
 
+    now += 1_000;
     await handleInteraction({ commands: new Map() }, makeInteraction(`perm:disable:${userId}`));
     assert.equal(database.hasPermission(guildId, 'member-with-role', PERMISSIONS.VIEW_STATS, [roleId]), false);
   } finally {
+    Date.now = originalNow;
     database.deleteUserData(userId);
     database.closeAll();
     require('node:fs').rmSync(require('node:path').join(__dirname, '..', 'data', 'guilds', guildId), { recursive: true, force: true });
@@ -318,6 +442,8 @@ test('routes a role select through permission grant and revoke', async () => {
 test('resets a guild only after the reset modal contains the exact uppercase word RESET', async () => {
   const userId = `reset-confirm-${randomUUID()}`;
   const guildId = `reset-guild-${randomUUID()}`;
+  const originalNow = Date.now;
+  let now = originalNow();
   const originalResetGuild = database.resetGuild;
   const calls = [];
   let resetCount = 0;
@@ -349,26 +475,31 @@ test('resets a guild only after the reset modal contains the exact uppercase wor
 
   try {
     database.setUserPreferences(userId, { language: 'en' });
+    Date.now = () => now;
     await handleInteraction({ commands: new Map() }, buttonInteraction);
     const modal = calls[0][1];
     assert.equal(modal.data.title, require('../src/i18n').MESSAGES.en.server_reset_phrase_title);
     const modalId = `db:reset-modal:${pendingServerResets.keys().next().value}:${userId}`;
+    now += 1_000;
     await handleInteraction({ commands: new Map() }, modalInteraction(modalId));
     assert.equal(resetCount, 0);
     assert.match(calls.at(-1)[1].embeds[0].data.title, /RESET/);
     assert.equal(pendingServerResets.size, 0);
 
     const secondButton = { ...buttonInteraction, showModal: async value => calls.push(['modal', value]) };
+    now += 1_000;
     await handleInteraction({ commands: new Map() }, secondButton);
     const secondModalId = `db:reset-modal:${pendingServerResets.keys().next().value}:${userId}`;
     const exactInteraction = {
       ...modalInteraction(secondModalId),
       fields: { getTextInputValue: () => 'RESET' }
     };
+    now += 1_000;
     await handleInteraction({ commands: new Map() }, exactInteraction);
     assert.equal(resetCount, 1);
     assert.deepEqual(calls.find(call => call[0] === 'reset').slice(1), [guildId, userId]);
   } finally {
+    Date.now = originalNow;
     database.resetGuild = originalResetGuild;
     for (const pending of pendingServerResets.values()) clearTimeout(pending.timer);
     pendingServerResets.clear();

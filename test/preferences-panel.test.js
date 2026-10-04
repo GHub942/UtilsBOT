@@ -11,6 +11,8 @@ test('renders preferences as grouped category and option select menus within Dis
 
   try {
     const regionPage = panels.userPayload(interaction, '', 'region');
+    const timestampZones = panels.timestampZonePayload(interaction, 'Europe/Paris');
+    const conversion = panels.convertPayload(interaction, { source: 'Europe/Paris', target: 'Asia/Tokyo', date: '', time: '' });
     const datePage = panels.userPayload(interaction, '', 'dates');
     const timePage = panels.userPayload(interaction, '', 'times');
     const languagePage = panels.userPayload(interaction, '', 'language');
@@ -47,12 +49,21 @@ test('renders preferences as grouped category and option select menus within Dis
       assert.equal(page.embeds.length, 1);
     }
     assert.equal(personalDataPage.embeds.length, 1);
-    assert.equal(administratorUserData.embeds.length, 0);
+    assert.equal(administratorUserData.embeds.length, 1);
     const zoneMenu = regionPage.components.flatMap(row => row.components).find(component => component.data.custom_id === `user:timezone-select:${userId}`);
-    assert.deepEqual(zoneMenu.options.map(option => option.data.value), ['UTC', ...ZONES.map(([zone]) => zone), 'custom']);
+    assert.deepEqual(zoneMenu.options.map(option => option.data.value), ['UTC', ...ZONES.map(([zone]) => zone)]);
     assert.equal(zoneMenu.options[0].data.label, 'UTC/GMT');
     assert.equal(zoneMenu.options.filter(option => option.data.label === 'UTC/GMT').length, 1);
-    assert.equal(zoneMenu.options.at(-1).data.label, require('../src/i18n').MESSAGES.fr.custom_zone);
+    assert.equal(zoneMenu.options.some(option => option.data.default), false);
+    assert.ok(regionPage.components.flatMap(row => row.components).some(component => component.data.custom_id === `user:timezone-custom:${userId}`));
+    assert.ok(regionPage.embeds[0].data.fields.some(field => field.name === require('../src/i18n').MESSAGES.fr.timezone && field.value.includes(database.getUser(userId).timezone)));
+    for (const page of [timestampZones, conversion]) {
+      const menus = page.components.flatMap(row => row.components).filter(component => component.data.type === 3);
+      assert.ok(menus.length > 0);
+      assert.ok(menus.every(menu => menu.options.every(option => !option.data.default)));
+    }
+    assert.ok(timestampZones.embeds[0].data.fields.some(field => field.value === 'Europe/Paris'));
+    assert.match(conversion.embeds[0].data.description, /Asia\/Tokyo/);
     assert.equal(regionPage.components[0].components[0].data.type, 2);
     assert.equal(datePage.components[0].components[0].data.type, 2);
   } finally {

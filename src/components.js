@@ -23,7 +23,7 @@ function zoneOptions(selected, language = 'fr') {
     label: value === 'UTC' ? t(language, 'zone_utc_gmt') : value,
     value,
     description,
-    default: value === 'UTC' ? ['UTC', 'GMT'].includes(selected) : value === selected
+    default: false
   }));
 }
 

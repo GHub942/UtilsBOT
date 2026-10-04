@@ -15,6 +15,7 @@ Do not use production credentials or production databases for development. Keep 
 - Keep changes focused and follow the existing CommonJS and Node.js patterns.
 - Preserve IANA time-zone and daylight-saving behavior when modifying date handling.
 - Keep authorization checks on server-data actions and test both allowed and denied access.
+- Keep user-facing replies in embeds and preserve interaction acknowledgement and cooldown behavior when adding commands or components.
 - Update the README and security guidance when behavior, configuration, storage, or permissions change.
 - Add focused tests for bug fixes and new behavior. Use Node's built-in `node:test` runner.
 - Check that documentation intended for users is clear and accurate.

@@ -16,6 +16,11 @@ const journalFilters = new Map();
 const pendingLanguages = new Map();
 const pendingDeletions = new Map();
 const pendingServerResets = new Map();
+const interactionCooldowns = new Map();
+const healthRefreshCooldowns = new Map();
+const timezoneOrigins = new Map();
+const INTERACTION_COOLDOWN_MS = 1_000;
+const HEALTH_REFRESH_COOLDOWN_MS = 3_000;
 
 function cancelPendingLanguage(userId) {
   const pending = pendingLanguages.get(userId);
@@ -32,9 +37,44 @@ function getJournalFilters(interaction) {
 function deletionKey(interaction) { return `${interaction.guildId || 'dm'}:${interaction.user.id}`; }
 function manager(interaction, permission) { return hasPermission(interaction, permission); }
 function updateSettings(userId, update) { return database.setUserPreferences(userId, update); }
-function ephemeralError(message) { return { content: `❌ ${message}`, flags: MessageFlags.Ephemeral }; }
+function ephemeralError(message) {
+  return { embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${message}`)], flags: MessageFlags.Ephemeral };
+}
+
+function remainingCooldown(cooldowns, userId, duration, now) {
+  const previous = cooldowns.get(userId);
+  return previous && now - previous < duration ? Math.ceil((duration - (now - previous)) / 1000) : 0;
+}
+
+function recordCooldown(cooldowns, userId, now, duration) {
+  cooldowns.set(userId, now);
+  if (cooldowns.size > 5_000) {
+    for (const [id, timestamp] of cooldowns) {
+      if (now - timestamp >= duration) cooldowns.delete(id);
+    }
+  }
+}
 
 async function handleInteraction(client, interaction) {
+  const userId = interaction.user?.id;
+  if (userId) {
+    const now = Date.now();
+    const isHealthRefresh = interaction.isButton?.() && interaction.customId?.startsWith(`manage:health-refresh:${userId}`);
+    const statusWait = isHealthRefresh
+      ? remainingCooldown(healthRefreshCooldowns, userId, HEALTH_REFRESH_COOLDOWN_MS, now)
+      : 0;
+    const generalWait = remainingCooldown(interactionCooldowns, userId, INTERACTION_COOLDOWN_MS, now);
+    const remaining = statusWait || generalWait;
+    if (remaining) {
+      const language = database.getUser(userId).language;
+      return interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle(t(language, 'interaction_cooldown_title')).setDescription(`${t(language, 'interaction_cooldown_description')} <t:${Math.ceil((now + remaining * 1000) / 1000)}:R>.`)],
+        flags: MessageFlags.Ephemeral
+      });
+    }
+    recordCooldown(interactionCooldowns, userId, now, INTERACTION_COOLDOWN_MS);
+    if (isHealthRefresh) recordCooldown(healthRefreshCooldowns, userId, now, HEALTH_REFRESH_COOLDOWN_MS);
+  }
   if (interaction.isChatInputCommand()) {
     cancelPendingLanguage(interaction.user.id);
     const command = client.commands.get(interaction.commandName);
@@ -60,11 +100,8 @@ async function handleInteraction(client, interaction) {
     && !/^danger:(confirm|cancel):/.test(interaction.customId)) {
     clearPendingDeletion(deletionKey(interaction));
   }
-  const opensModal = interaction.isButton() && /^(timestamp:(date|time)|convert:(date|time|source):|db:reset-confirm:)/.test(interaction.customId);
-  const selectsCustomZone = interaction.isStringSelectMenu()
-    && (interaction.customId === `timestamp:zone-select:${interaction.user.id}` || interaction.customId === `user:timezone-select:${interaction.user.id}` || interaction.customId.startsWith(`convert:zone-select:`))
-    && interaction.values[0] === 'custom';
-  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.()) && !opensModal && !selectsCustomZone) {
+  const opensModal = interaction.isButton() && /^(timestamp:(date|time|zone-custom)|convert:(date|time|zone-custom):|user:timezone-custom:|db:reset-confirm:)/.test(interaction.customId);
+  if ((interaction.isButton() || interaction.isStringSelectMenu() || interaction.isUserSelectMenu() || interaction.isRoleSelectMenu?.()) && !opensModal) {
     interaction = await acknowledgeComponent(interaction);
   }
   if (!interaction.customId || owns(interaction.customId, interaction.user.id)) {
@@ -121,8 +158,7 @@ function beginDeletionConfirmation(interaction, type, subjectId = null) {
   }[type] || 'delete_second_confirmation';
   const subject = subjectId ? `\n${t(language, 'deletion_subject')}: <@${subjectId}>` : '';
   const payload = {
-    content: `${t(language, confirmationKey)}${subject}\n${t(language, 'confirm_before')} <t:${Math.ceil(expiresAt / 1000)}:R>.`,
-    embeds: [],
+    embeds: [new EmbedBuilder().setColor(0xed4245).setTitle(t(language, 'confirm_delete')).setDescription(`${t(language, confirmationKey)}${subject}\n${t(language, 'confirm_before')} <t:${Math.ceil(expiresAt / 1000)}:R>.`)],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`danger:confirm:${nonce}:${interaction.user.id}`).setLabel(t(language, 'confirm_delete')).setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId(`danger:cancel:${nonce}:${interaction.user.id}`).setLabel(t(language, 'cancel')).setStyle(ButtonStyle.Secondary)
@@ -132,8 +168,7 @@ function beginDeletionConfirmation(interaction, type, subjectId = null) {
     if (pendingDeletions.get(key) !== pending) return;
     pendingDeletions.delete(key);
     interaction.editReply({
-      content: `${t(language, 'deletion_expired')} <t:${Math.ceil(Date.now() / 1000)}:R>.`,
-      embeds: [],
+      embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription(`${t(language, 'deletion_expired')} <t:${Math.ceil(Date.now() / 1000)}:R>.`)],
       components: []
     }).catch(error => logger.warn('Could not expire a pending deletion confirmation', error.stack || error.message));
   }, 5_000);
@@ -193,42 +228,52 @@ async function finishDeletionConfirmation(interaction, action, nonce) {
   const key = deletionKey(interaction);
   const pending = pendingDeletions.get(key);
   if (!pending || pending.nonce !== nonce) {
-    return interaction.update({ content: t(database.getUser(interaction.user.id).language, 'deletion_expired'), embeds: [], components: [] });
+    return interaction.update({ embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription(t(database.getUser(interaction.user.id).language, 'deletion_expired'))], components: [] });
   }
   if (Date.now() > pending.expiresAt) {
     clearPendingDeletion(key);
-    return interaction.update({ content: t(database.getUser(interaction.user.id).language, 'deletion_expired'), embeds: [], components: [] });
+    return interaction.update({ embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription(t(database.getUser(interaction.user.id).language, 'deletion_expired'))], components: [] });
   }
   if (action === 'cancel') {
     clearPendingDeletion(key);
-    return interaction.update({ content: t(pending.language, 'deletion_cancelled'), embeds: [], components: [] });
+    if (pending.type === 'preferences') return interaction.update(panels.userPayload(interaction, t(pending.language, 'deletion_cancelled'), 'privacy-delete-preferences'));
+    if (pending.type === 'permissions') return interaction.update(panels.userPayload(interaction, t(pending.language, 'deletion_cancelled'), 'privacy-delete-permissions'));
+    if (pending.type === 'managed-user-data') {
+      return interaction.update({
+        embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle(t(pending.language, 'delete_user_title')).setDescription(`${t(pending.language, 'delete_user_prompt')}\n<@${pending.subjectId}>`)],
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`data:delete-confirm:${interaction.user.id}`).setLabel(t(pending.language, 'confirm')).setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId(`db:users:${interaction.user.id}`).setLabel(t(pending.language, 'cancel')).setStyle(ButtonStyle.Secondary)
+        )]
+      });
+    }
+    return interaction.update({ embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription(t(pending.language, 'deletion_cancelled'))], components: [] });
   }
   if (pending.type === 'managed-user-data'
     && (!interaction.guildId || interaction.guildId !== pending.guildId || !manager(interaction, PERMISSIONS.MANAGE_USER_DATA))) {
     clearPendingDeletion(key);
-    return interaction.update({ content: t(pending.language, 'denied'), embeds: [], components: [] });
+    return interaction.update({ embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(t(pending.language, 'denied'))], components: [] });
   }
   clearPendingDeletion(key);
   if (pending.type === 'preferences') {
     database.deleteUserPreferences(interaction.user.id);
-    return interaction.update({ content: t(pending.language, 'preferences_deleted'), embeds: [], components: [] });
+    return interaction.update({ embeds: [new EmbedBuilder().setColor(0x57f287).setDescription(t(pending.language, 'preferences_deleted'))], components: [] });
   }
   if (pending.type === 'permissions') {
-    if (!interaction.guildId) return interaction.update({ content: t(pending.language, 'no_server_permissions'), embeds: [], components: [] });
+    if (!interaction.guildId) return interaction.update({ embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(t(pending.language, 'no_server_permissions'))], components: [] });
     database.deleteGuildUserPermissions(interaction.guildId, interaction.user.id);
-    return interaction.update({ content: t(pending.language, 'server_permissions_deleted'), embeds: [], components: [] });
+    return interaction.update({ embeds: [new EmbedBuilder().setColor(0x57f287).setDescription(t(pending.language, 'server_permissions_deleted'))], components: [] });
   }
   if (pending.type === 'managed-user-data' && pending.subjectId) {
     database.addAudit(pending.guildId, 'user.delete', interaction.user.id, pending.subjectId);
     database.deleteUserData(pending.subjectId);
     selections.delete(selectionKey(interaction));
     return interaction.update({
-      content: `${t(pending.language, 'user_data_deleted')} <@${pending.subjectId}>.`,
-      embeds: [],
+      embeds: [new EmbedBuilder().setColor(0x57f287).setDescription(`${t(pending.language, 'user_data_deleted')} <@${pending.subjectId}>.`)],
       components: []
     });
   }
-  return interaction.update({ content: t(pending.language, 'generic_error'), embeds: [], components: [] });
+  return interaction.update({ embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(t(pending.language, 'generic_error'))], components: [] });
 }
 
 function confirmLanguage(interaction, nonce) {
@@ -265,6 +310,7 @@ async function handleButton(interaction) {
     if (action === 'database') return canOpenServerDashboard(interaction) ? interaction.update(panels.databasePayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_no_server_access')));
     if (action === 'stats') return manager(interaction, PERMISSIONS.VIEW_STATS) ? showStats(interaction) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_stats_permission')));
     if (action === 'health') return canOpenServerDashboard(interaction) ? interaction.update(panels.healthPayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_no_server_access')));
+    if (action === 'health-refresh') return canOpenServerDashboard(interaction) ? interaction.update(panels.healthPayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_no_server_access')));
   }
   if (area === 'db') {
     if (action === 'users') return manager(interaction, PERMISSIONS.VIEW_DATA) ? interaction.update(panels.userDataPayload(interaction)) : interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_data_permission')));
@@ -278,7 +324,8 @@ async function handleButton(interaction) {
       if (!manager(interaction, PERMISSIONS.VIEW_STATS)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_journal_permission')));
       const file = new AttachmentBuilder(Buffer.from(JSON.stringify(database.exportAudit(interaction.guildId, getJournalFilters(interaction)), null, 2)), { name: `utils_journal_${interaction.guildId}.json` });
       database.addAudit(interaction.guildId, 'journal.export', interaction.user.id);
-      return interaction.reply({ content: `${t(database.getUser(interaction.user.id).language, 'journal_exported')}. ${t(database.getUser(interaction.user.id).language, 'journal_export_description')}`, files: [file], flags: MessageFlags.Ephemeral });
+      const language = database.getUser(interaction.user.id).language;
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(t(language, 'journal_exported')).setDescription(t(language, 'journal_export_description'))], files: [file], flags: MessageFlags.Ephemeral });
     }
     if (action === 'clear') {
       journalFilters.delete(selectionKey(interaction));
@@ -303,12 +350,13 @@ async function handleButton(interaction) {
       if (!manager(interaction, PERMISSIONS.EXPORT_DATA)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_export_permission')));
       const file = new AttachmentBuilder(Buffer.from(JSON.stringify(database.getUserData(interaction.guildId, state.memberId), null, 2)), { name: `utils_user_${state.memberId}.json` });
       database.addAudit(interaction.guildId, 'user.export', interaction.user.id, state.memberId);
-      return interaction.reply({ content: `${t(database.getUser(interaction.user.id).language, 'user_exported')}: <@${state.memberId}>. ${t(database.getUser(interaction.user.id).language, 'user_export_description')}`, files: [file], flags: MessageFlags.Ephemeral });
+      const language = database.getUser(interaction.user.id).language;
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(t(language, 'user_exported')).setDescription(`${t(language, 'user_export_description')}\n<@${state.memberId}>`)], files: [file], flags: MessageFlags.Ephemeral });
     }
     if (action === 'delete') {
       if (!manager(interaction, PERMISSIONS.MANAGE_USER_DATA)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_user_manage_permission')));
       const language = database.getUser(interaction.user.id).language;
-      return interaction.update({ content: `**${t(language, 'delete_user_title')}**\n${t(language, 'delete_user_prompt')}\n<@${state.memberId}>`, embeds: [], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`data:delete-confirm:${interaction.user.id}`).setLabel(t(language, 'confirm')).setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId(`db:users:${interaction.user.id}`).setLabel(t(language, 'cancel')).setStyle(ButtonStyle.Secondary))] });
+      return interaction.update({ embeds: [new EmbedBuilder().setColor(0xed4245).setTitle(t(language, 'delete_user_title')).setDescription(`${t(language, 'delete_user_prompt')}\n<@${state.memberId}>`)], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`data:delete-confirm:${interaction.user.id}`).setLabel(t(language, 'confirm')).setStyle(ButtonStyle.Danger), new ButtonBuilder().setCustomId(`db:users:${interaction.user.id}`).setLabel(t(language, 'cancel')).setStyle(ButtonStyle.Secondary))] });
     }
     if (action === 'delete-confirm') {
       if (!manager(interaction, PERMISSIONS.MANAGE_USER_DATA)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_user_manage_permission')));
@@ -337,6 +385,14 @@ async function handleButton(interaction) {
   }
   if (area === 'user') {
     if (action === 'category') return interaction.update(panels.userPayload(interaction, '', interaction.customId.split(':')[2]));
+    if (action === 'timezone-custom') {
+      const previous = timezoneOrigins.get(interaction.user.id);
+      if (previous) clearTimeout(previous.timer);
+      const timer = setTimeout(() => timezoneOrigins.delete(interaction.user.id), 15 * 60_000);
+      timer.unref();
+      timezoneOrigins.set(interaction.user.id, { interaction, timer });
+      return interaction.showModal(require('./modals').timezone(database.getUser(interaction.user.id).timezone, database.getUser(interaction.user.id).language));
+    }
     if (action === 'submenu') {
       const section = interaction.customId.split(':')[2];
       if (!['language', 'privacy'].includes(section)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'error_submenu_unavailable')));
@@ -369,6 +425,7 @@ async function handleButton(interaction) {
   }
   if (area === 'timestamp') {
     if (action === 'zone') return interaction.update(panels.timestampZonePayload(interaction, timestamp.getDraft(interaction.user.id).zone));
+    if (action === 'zone-custom') return timestamp.openZoneField(interaction);
     if (action === 'date' || action === 'time') return timestamp.openField(interaction, action);
     if (action === 'confirm') return timestamp.confirm(interaction);
     if (action === 'disambiguation') return timestamp.handleDisambiguation(interaction, Number(interaction.customId.split(':')[2]));
@@ -378,6 +435,7 @@ async function handleButton(interaction) {
   if (area === 'convert') {
     if (action === 'zone-back') return interaction.update(panels.convertPayload(interaction, convert.getDraft(interaction.user.id)));
     if (action === 'zone') return interaction.update(panels.convertZonePayload(interaction, interaction.customId.split(':')[2], convert.getDraft(interaction.user.id)));
+    if (action === 'zone-custom') return convert.openZoneField(interaction, interaction.customId.split(':')[2]);
     if (action === 'date' || action === 'time') return convert.openField(interaction, action);
     if (action === 'confirm') return convert.confirm(interaction);
     if (action === 'back') return interaction.update(panels.convertPayload(interaction, convert.getDraft(interaction.user.id)));
@@ -405,7 +463,6 @@ async function handleSelect(interaction) {
   if (area === 'convert' && action === 'zone-select') {
     const role = interaction.customId.split(':')[2];
     const value = interaction.values[0];
-    if (value === 'custom') return convert.openZoneField(interaction, role);
     if (!isSelectableZone(value)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'invalid_zone')));
     const draft = convert.getDraft(interaction.user.id);
     draft[role] = value;
@@ -414,7 +471,6 @@ async function handleSelect(interaction) {
   }
   if (area === 'timestamp' && action === 'zone-select') {
     const value = interaction.values[0];
-    if (value === 'custom') return timestamp.openZoneField(interaction);
     if (!isSelectableZone(value)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'invalid_zone')));
     const draft = timestamp.getDraft(interaction.user.id);
     draft.zone = value;
@@ -423,10 +479,6 @@ async function handleSelect(interaction) {
   }
   if (area === 'user' && action === 'timezone-select') {
     const value = interaction.values[0];
-    if (value === 'custom') {
-      const settings = database.getUser(interaction.user.id);
-      return interaction.showModal(require('./modals').timezone(settings.timezone, settings.language));
-    }
     if (!isSelectableZone(value)) return interaction.reply(ephemeralError(t(database.getUser(interaction.user.id).language, 'invalid_zone')));
     updateSettings(interaction.user.id, { timezone: value });
     return interaction.update(panels.userPayload(interaction, `${t(database.getUser(interaction.user.id).language, 'timezone_updated')} **${value}**.`, 'region'));
@@ -458,9 +510,13 @@ async function handleTimezoneModal(interaction) {
   const value = interaction.fields.getTextInputValue('timezone').trim();
   const language = database.getUser(interaction.user.id).language;
   if (!isSelectableZone(value)) return interaction.reply(ephemeralError(t(language, 'invalid_zone')));
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   updateSettings(interaction.user.id, { timezone: value });
-  return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(t(language, 'timezone_saved_title')).setDescription(`${t(language, 'timezone_saved')} **${database.getUser(interaction.user.id).timezone}**.`)] });
+  const pendingOrigin = timezoneOrigins.get(interaction.user.id);
+  const origin = pendingOrigin?.interaction;
+  if (pendingOrigin) clearTimeout(pendingOrigin.timer);
+  timezoneOrigins.delete(interaction.user.id);
+  if (origin) await origin.editReply(panels.userPayload(interaction, `${t(language, 'timezone_updated')} **${value}**.`, 'region'));
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(t(language, 'timezone_saved_title')).setDescription(`${t(language, 'timezone_saved')} **${value}**.`)], flags: MessageFlags.Ephemeral });
 }
 
 function userSelect(customId, placeholder) { return new ActionRowBuilder().addComponents(new UserSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).setMinValues(1).setMaxValues(1)); }
@@ -469,7 +525,6 @@ function showStats(interaction) {
   const language = database.getUser(interaction.user.id).language;
   return interaction.update({
     embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(t(language, 'server_stats_title')).addFields({ name: t(language, 'server_audit_label'), value: String(stats.audit), inline: true })],
-    content: '',
     components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`manage:database:${interaction.user.id}`).setLabel(t(language, 'database_back')).setStyle(ButtonStyle.Secondary))]
   });
 }
@@ -477,14 +532,14 @@ function showStats(interaction) {
 function exportGuild(interaction) {
   const file = new AttachmentBuilder(Buffer.from(JSON.stringify(database.exportGuild(interaction.guildId), null, 2)), { name: `utils_${interaction.guildId}.json` });
   database.addAudit(interaction.guildId, 'guild.export', interaction.user.id);
-  return interaction.reply({ content: `${t(database.getUser(interaction.user.id).language, 'server_exported')}. ${t(database.getUser(interaction.user.id).language, 'server_export_description')}`, files: [file], flags: MessageFlags.Ephemeral });
+  const language = database.getUser(interaction.user.id).language;
+  return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle(t(language, 'server_exported')).setDescription(t(language, 'server_export_description'))], files: [file], flags: MessageFlags.Ephemeral });
 }
 
 function confirmReset(interaction) {
   const language = database.getUser(interaction.user.id).language;
   return interaction.update({
     embeds: [new EmbedBuilder().setColor(0xed4245).setTitle(t(language, 'server_reset_confirm_title')).setDescription(t(language, 'server_reset_confirm_description'))],
-    content: '',
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`db:reset-confirm:${interaction.user.id}`).setLabel(t(language, 'confirm')).setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId(`manage:database:${interaction.user.id}`).setLabel(t(language, 'cancel')).setStyle(ButtonStyle.Secondary)
@@ -497,8 +552,11 @@ function showUserData(interaction, userId) {
   if (!manager(interaction, PERMISSIONS.VIEW_DATA)) return interaction.reply(ephemeralError(t(language, 'error_data_permission')));
   const data = database.getUserData(interaction.guildId, userId);
   return interaction.update({
-    content: `**${t(language, 'user_data_title')} • <@${userId}>**\n${t(language, 'timezone')}: **${data.preferences.timezone}**\n${t(language, 'language')}: **${data.preferences.language.toUpperCase()}**\n${t(language, 'health_audit')}: **${data.audit.length}**`,
-    embeds: [],
+    embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${t(language, 'user_data_title')} • ${userId}`).addFields(
+      { name: t(language, 'timezone'), value: data.preferences.timezone, inline: true },
+      { name: t(language, 'language'), value: data.preferences.language.toUpperCase(), inline: true },
+      { name: t(language, 'health_audit'), value: String(data.audit.length), inline: true }
+    )],
     components: [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`data:export:${interaction.user.id}`).setLabel(t(language, 'database_export')).setStyle(ButtonStyle.Secondary).setDisabled(!manager(interaction, PERMISSIONS.EXPORT_DATA)),
@@ -509,4 +567,4 @@ function showUserData(interaction, userId) {
   });
 }
 
-module.exports = { beginDeletionConfirmation, cancelLanguage, cancelPendingLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage };
+module.exports = { beginDeletionConfirmation, cancelLanguage, cancelPendingLanguage, confirmLanguage, finishDeletionConfirmation, handleInteraction, healthRefreshCooldowns, interactionCooldowns, journalFilters, pendingDeletions, pendingLanguages, pendingServerResets, previewLanguage };

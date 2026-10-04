@@ -35,15 +35,16 @@ Environment variables:
 - Timestamp creation displays a Discord preview, Unix timestamp, and copy-ready Discord formats.
 - Time-zone conversion handles IANA time zones, fixed UTC offsets, seasonal offsets, and daylight-saving transitions.
 - Preference controls are grouped by region, dates, times, and language/privacy. Language previews show a relative reset time and require confirmation within 10 seconds.
-- The region menu offers ten city-based IANA zones plus one UTC/GMT option. The custom time-zone option remains selectable regardless of the current zone. Custom input accepts supported IANA zones, fixed abbreviations, and UTC/GMT offsets.
+- The region menu offers curated city-based IANA zones plus one UTC/GMT option. The custom time-zone button remains available regardless of the current zone. Custom input accepts supported IANA zones, fixed abbreviations, and UTC/GMT offsets.
 - Choosing UTC/GMT saves an automatic display preference: UTC is shown in Central European winter, GMT in summer, and both represent a fixed +00:00 offset.
 - Time conversion asks for both source and destination zones. The destination initially follows the user's saved time-zone preference.
 - Timestamp input pads short dates, expands two-digit years, and fills in omitted seconds.
 - Only the guild owner has implicit full access. Every other member, including members with Discord's `Manage Server` permission, must be explicitly granted the relevant Utils permission.
 - Data exports and the audit journal are available only to members with the corresponding Utils permission.
 - The server audit journal can be filtered by multiple members and action types at once; pagination and JSON export preserve the active filters.
-- User-data and self-service deletions require a second confirmation within five seconds; server reset requires the exact `RESET` confirmation phrase.
-- Personal “View my data” uses an embed; administrator-facing user-data review remains plain text.
+- User-data and self-service deletions require a second confirmation within five seconds; cancelling returns to the preceding confirmation screen. Server reset requires the exact `RESET` confirmation phrase.
+- Bot responses, including user-data views, administrative panels, exports, and errors, use embeds.
+- Every interaction has a one-second per-user cooldown. Operational-status refresh has an additional three-second per-user cooldown.
 - The operational status view reports readiness, Discord-relative uptime, gateway latency, aggregate server/member counts, shards, loaded commands, Node.js version, process memory, and current-server audit-log size. It can be refreshed and excludes credentials and individual user data.
 
 The removed `/timezone` and `/timestamp` application commands are not registered. Use the corresponding tools under `/dashboard utils`.
@@ -60,7 +61,7 @@ Server reset requires two steps: an authorized member opens the confirmation for
 
 The bot stores guild data in `data/guilds/<guild-id>/data.sqlite` and personal preferences in `data/users/<user-id>/data.sqlite`. Guild databases include explicit permissions, server settings, and an audit log. User databases contain preferences. SQLite uses write-ahead logging.
 
-Users can view their own stored preferences and current-server Utils permissions in an embed under Preferences > Language & privacy > Privacy. They can separately delete bot preferences or remove their assigned Utils permissions and identifying audit entries from the current server. These self-service actions do not affect permissions granted on other servers. Self-service and user-data deletion use a second confirmation that expires after five seconds. Server reset instead requires the exact uppercase phrase `RESET`. Server members can export or delete another user's data only when explicitly assigned the corresponding Utils permission; administrator-facing user-data review is plain text. Keep `.env` and the `data/` directory private, restrict access to backups, and never commit tokens or database files.
+Users can view their own stored preferences and current-server Utils permissions in an embed under Preferences > Language & privacy > Privacy. They can separately delete bot preferences or remove their assigned Utils permissions and identifying audit entries from the current server. These self-service actions do not affect permissions granted on other servers. Self-service and user-data deletion use a second confirmation that expires after five seconds; cancelling returns to the preceding screen. Server reset instead requires the exact uppercase phrase `RESET`. Server members can export or delete another user's data only when explicitly assigned the corresponding Utils permission. Keep `.env` and the `data/` directory private, restrict access to backups, and never commit tokens or database files.
 
 ## Database backups
 

@@ -97,7 +97,7 @@ async function updateAfterModal(interaction, draft) {
   drafts.set(interaction.user.id, draft);
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const updated = await updateDraftMessage(interaction.user.id, panels.timestampPayload(interaction, draft));
-  if (!updated) return interaction.editReply({ content: t(draft.language, 'expired_flow') });
+  if (!updated) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xfee75c).setDescription(t(draft.language, 'expired_flow'))] });
   return interaction.deleteReply();
 }
 
@@ -113,7 +113,7 @@ async function handleZoneModal(interaction) {
   const value = interaction.fields.getTextInputValue('zone').trim();
   const language = drafts.get(interaction.user.id)?.language || 'fr';
   if (!isSelectableZone(value)) {
-    return interaction.reply({ content: `❌ ${t(language, 'invalid_zone')}`, flags: MessageFlags.Ephemeral });
+    return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${t(language, 'invalid_zone')}`)], flags: MessageFlags.Ephemeral });
   }
   const draft = getDraft(interaction.user.id);
   draft.zone = value;

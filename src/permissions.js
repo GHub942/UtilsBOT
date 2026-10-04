@@ -28,9 +28,12 @@ function hasPermission(interaction, permission) {
 }
 
 function hasStoredPermission(interaction, permission) {
-  const roleIds = interaction.member?.roles?.cache
-    ? [...interaction.member.roles.cache.keys()]
-    : [];
+  const memberRoles = interaction.member?.roles;
+  const roleIds = Array.isArray(memberRoles)
+    ? memberRoles
+    : memberRoles?.cache
+      ? [...memberRoles.cache.keys()]
+      : [];
   return Boolean(interaction.guildId && database.hasPermission(interaction.guildId, interaction.user.id, permission, roleIds));
 }
 
