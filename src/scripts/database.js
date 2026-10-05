@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync, backup } = require('node:sqlite');
-const { acquireProcessLock } = require('../src/process-lock');
+const { acquireProcessLock } = require('../process-lock');
 
 async function copyDatabaseTree(sourceRoot, destinationRoot) {
   if (!fs.existsSync(sourceRoot)) throw new Error(`Database source does not exist: ${sourceRoot}`);
@@ -33,10 +33,10 @@ async function copyDatabaseTree(sourceRoot, destinationRoot) {
 async function run() {
   const [action, target] = process.argv.slice(2);
   if (!['backup', 'restore'].includes(action) || !target) {
-    throw new Error('Usage: node scripts/database.js <backup|restore> <directory>');
+    throw new Error('Usage: node src/scripts/database.js <backup|restore> <directory>');
   }
 
-  const root = path.resolve(__dirname, '..');
+  const root = path.resolve(__dirname, '../..');
   const dataRoot = path.join(root, 'data');
   const targetRoot = path.resolve(target);
   if (targetRoot === dataRoot || targetRoot.startsWith(`${dataRoot}${path.sep}`)) {

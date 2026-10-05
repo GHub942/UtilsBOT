@@ -4,7 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { DatabaseSync } = require('node:sqlite');
-const { copyDatabaseTree } = require('../scripts/database');
+const { copyDatabaseTree } = require('../src/scripts/database');
 
 test('backs up and restores SQLite databases through the SQLite backup API', async () => {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'utilsbot-db-test-'));

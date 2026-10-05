@@ -69,7 +69,6 @@ web_modules/
 .env
 data/
 data/bot.pid
-.copilot/
 .env.*
 !.env.example
 

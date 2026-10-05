@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "deploy": "node deploy-commands.js",
-    "database": "node scripts/database.js",
+    "database": "node src/scripts/database.js",
     "test": "node --test --test-concurrency=1"
   },
   "engines": {

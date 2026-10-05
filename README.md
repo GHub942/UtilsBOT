@@ -85,7 +85,7 @@ npm run database -- restore ../utilsbot-backup-2026-10-04
 
 Restore does not delete live databases absent from the backup. Keep backups access-controlled, test restores periodically, and store copies separately from the bot host.
 
-The `scripts/database.js` program is an operator utility invoked by `npm run database`; the bot does not load it during normal startup.
+The `src/scripts/database.js` program is an operator utility invoked by `npm run database`; the bot does not load it during normal startup.
 
 ## Development and tests
 
